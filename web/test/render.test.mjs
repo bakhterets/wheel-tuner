@@ -30,8 +30,8 @@ function sampleRows() {
 const result = {
   orientation: 'Start at Valve Hole. View from Drive Side. Count CCW.',
   actions: [
-    { spoke_index: 3, side: 'L', direction: 'tighten', instruction: 'Spoke L3: +1/2 turn (Tighten)' },
-    { spoke_index: 4, side: 'R', direction: 'loosen', instruction: 'Spoke R4: -1/4 turn (Loosen)' },
+    { spoke_index: 3, side: 'L', direction: 'tighten', instruction: 'Spoke L2: +1/2 turn (Tighten)' },
+    { spoke_index: 4, side: 'R', direction: 'loosen', instruction: 'Spoke R2: -1/4 turn (Loosen)' },
   ],
   before: { max_lateral_mm: 0.9, max_radial_mm: 0.5, tension_spread_left_kgf: 17, tension_spread_right_kgf: 0 },
   after: { max_lateral_mm: 0.2, max_radial_mm: 0.1, tension_spread_left_kgf: 9, tension_spread_right_kgf: 1 },
@@ -64,8 +64,9 @@ describe('renderWheel', () => {
     assert.ok(spokes[0].classList.contains('idle'));
     assert.ok(spokes[0].classList.contains('far'), 'L spokes are on the far side when viewing from the drive side');
     assert.ok(spokes[1].classList.contains('near'));
-    assert.equal(spokes[2].textContent, 'Spoke L3: +1/2 turn (Tighten)');
+    assert.equal(spokes[2].textContent, 'Spoke L2: +1/2 turn (Tighten)');
     assert.equal(spokes[0].textContent, 'Spoke L1');
+    assert.deepEqual(c.querySelectorAll('text.spoke-label').map((label) => label.textContent), ['L1', 'R1', 'L2', 'R2', 'L3', 'R3', 'L4', 'R4']);
     assert.equal(c.querySelectorAll('text.tighten').length, 1);
   });
 
@@ -114,7 +115,7 @@ describe('renderRadar', () => {
     const predicted = c.querySelectorAll('polygon.predicted');
     assert.equal(predicted.length, 2);
     assert.equal(predicted[0].getAttribute('points').split(' ').length, 3, 'DS: R2, R4, R6');
-    assert.equal(c.querySelectorAll('circle.dot')[0].textContent, 'R2: +0.0% vs R average');
+    assert.equal(c.querySelectorAll('circle.dot')[0].textContent, 'R1: +0.0% vs R average');
   });
 
   it('shows a hint without data and uses a polyline for sparse sides', () => {
@@ -145,8 +146,8 @@ describe('renderResults', () => {
     assert.equal(c.querySelector('p.orientation').textContent, result.orientation);
     const items = c.querySelectorAll('li');
     assert.deepEqual(items.map((li) => li.className), ['tighten', 'loosen']);
-    assert.match(items[0].textContent, /↑Spoke L3: \+1\/2 turn \(Tighten\)/);
-    assert.match(items[1].textContent, /↓Spoke R4/);
+    assert.match(items[0].textContent, /↑Spoke L2: \+1\/2 turn \(Tighten\)/);
+    assert.match(items[1].textContent, /↓Spoke R2/);
     const firstRow = c.querySelector('tbody').children[0].textContent;
     assert.equal(firstRow, 'Max lateral (wobble)0.90 mm0.20 mm−78%');
   });
@@ -178,22 +179,33 @@ describe('grid', () => {
   }
   const cell = (tbody, row, col) => tbody.children[row].querySelectorAll('[data-col]').find((e) => e.dataset.col === String(col));
 
-  it('renders only the spokes of its side, keeping the global spoke number', () => {
+  it('renders only the spokes of its side, with side-local labels and global row positions', () => {
     const rows = defaultRows(5);
     rows[3].lateral_dev_mm = 0.25;
     rows[3].lat_peak_between_next = true;
     const left = setup(rows, 'L').tbody;
-    assert.deepEqual(left.children.map((tr) => tr.children[0].textContent), ['1', '3', '5']);
+    assert.deepEqual(left.children.map((tr) => tr.children[0].textContent), ['1', '2', '3']);
     assert.deepEqual(left.children.map((tr) => tr.className), ['side-l', 'side-l', 'side-l']);
     const { tbody } = setup(rows, 'R');
     assert.equal(tbody.children.length, 2);
     assert.equal(tbody.children[0].className, 'side-r');
-    assert.equal(cell(tbody, 1, 0).textContent, '4');
+    assert.equal(cell(tbody, 1, 0).textContent, '2');
     assert.equal(cell(tbody, 1, 0).dataset.row, '3', 'data-row is the position in all rows');
     assert.equal(cell(tbody, 1, 2).value, '0.25');
-    assert.equal(cell(tbody, 1, 2).getAttribute('aria-label'), 'lateral_dev_mm spoke R4');
+    assert.equal(cell(tbody, 1, 2).getAttribute('aria-label'), 'lateral_dev_mm spoke R2');
     assert.equal(cell(tbody, 1, 1).value, '');
     assert.equal(cell(tbody, 1, 3).checked, true);
+  });
+
+  it('numbers a 28-spoke wheel from 1 to 14 on each side', () => {
+    const rows = defaultRows(28);
+    const left = setup(rows, 'L').tbody.children;
+    const right = setup(rows, 'R').tbody.children;
+    const labels = (sideRows) => sideRows.map((tr) => tr.children[0].textContent);
+    assert.equal(left.length, 14);
+    assert.equal(right.length, 14);
+    assert.deepEqual(labels(left), Array.from({ length: 14 }, (_, i) => String(i + 1)));
+    assert.deepEqual(labels(right), Array.from({ length: 14 }, (_, i) => String(i + 1)));
   });
 
   it('updates rows on typing without re-rendering and flags invalid numbers', () => {

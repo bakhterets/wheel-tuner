@@ -74,3 +74,10 @@ func TestActionInstruction(t *testing.T) {
 		}
 	}
 }
+
+func TestActionInstructionWithSpokeNumber(t *testing.T) {
+	a := Action{Spoke: 27, Side: Left, Turns: -0.25}
+	if got, want := a.InstructionWithSpokeNumber(14), "Spoke L14: -1/4 turn (Loosen)"; got != want {
+		t.Errorf("InstructionWithSpokeNumber() = %q, want %q", got, want)
+	}
+}

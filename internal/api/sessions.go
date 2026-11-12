@@ -23,6 +23,7 @@ const tensionWarningRatio = 0.95
 type actionDTO struct {
 	Spoke               int     `json:"spoke_index"`
 	Side                string  `json:"side"`
+	SideSpokeNumber     int     `json:"side_spoke_number"`
 	Turns               float64 `json:"turns"`
 	Fraction            string  `json:"fraction"`
 	Direction           string  `json:"direction"`
@@ -259,6 +260,7 @@ func (s *Server) run(wheel model.WheelSetup, ms []model.Measurement) (solveRespo
 		TensionLimitLeftKgf:  sw.TensionLimitLeftKgf,
 		TensionLimitRightKgf: sw.TensionLimitRightKgf,
 	}
+	sideSpokeNumbers := spokeNumbersBySide(ms)
 	for i, a := range res.Actions {
 		dir := "loosen"
 		if a.Tighten() {
@@ -269,10 +271,11 @@ func (s *Server) run(wheel model.WheelSetup, ms []model.Measurement) (solveRespo
 		resp.Actions[i] = actionDTO{
 			Spoke:               a.Spoke,
 			Side:                a.Side.String(),
+			SideSpokeNumber:     sideSpokeNumbers[a.Spoke],
 			Turns:               a.Turns,
 			Fraction:            a.Fraction(),
 			Direction:           dir,
-			Instruction:         a.Instruction(),
+			Instruction:         a.InstructionWithSpokeNumber(sideSpokeNumbers[a.Spoke]),
 			PredictedTensionKgf: kgf,
 			TensionWarning:      warn(kgf),
 		}
@@ -288,6 +291,20 @@ func (s *Server) run(wheel model.WheelSetup, ms []model.Measurement) (solveRespo
 		}
 	}
 	return resp, nil
+}
+
+func spokeNumbersBySide(ms []model.Measurement) map[int]int {
+	numbers := make(map[int]int, len(ms))
+	for _, m := range ms {
+		number := 1
+		for _, other := range ms {
+			if other.Side == m.Side && other.SpokeIndex < m.SpokeIndex {
+				number++
+			}
+		}
+		numbers[m.SpokeIndex] = number
+	}
+	return numbers
 }
 
 func toMetricsDTO(m solver.Metrics) metricsDTO {

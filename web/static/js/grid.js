@@ -1,8 +1,8 @@
 // Measurement input: one table per flange (left = rotor side, right) with
-// spreadsheet paste support. Rows keep their global spoke number; a table
-// shows only the spokes of its side.
+// spreadsheet paste support. API indexes stay global; tables show numbers
+// local to each side.
 import { h } from './dom.js';
-import { sideIndexes } from './measurements.js';
+import { sideIndexes, sideNumbers } from './measurements.js';
 import { applyPaste, COLUMNS, parseNumber, parseTable } from './paste.js';
 import { applyReadings, readingPreview, tensionPatch } from './tensiometer.js';
 
@@ -18,11 +18,11 @@ export function columnsFor(conv) {
 
 const isUnconverted = (row, conv) => Boolean(conv) && (row.tension_reading ?? null) !== null && row.tension_kgf === null;
 
-function cellInput(row, rowIdx, col, colIdx, conv) {
-  const data = { 'data-row': rowIdx, 'data-col': colIdx, 'aria-label': `${col.key} spoke ${row.side}${row.spoke_index}` };
+function cellInput(row, rowIdx, spokeNumber, col, colIdx, conv) {
+  const data = { 'data-row': rowIdx, 'data-col': colIdx, 'aria-label': `${col.key} spoke ${row.side}${spokeNumber}` };
   switch (col.type) {
     case 'readonly':
-      return h('th', { scope: 'row', tabindex: 0, ...data, text: String(row.spoke_index) });
+      return h('th', { scope: 'row', tabindex: 0, ...data, text: String(spokeNumber) });
     case 'bool':
       return h('td', { class: 'center' }, h('input', { ...data, type: 'checkbox', checked: row[col.key] }));
     default: {
@@ -47,8 +47,9 @@ function cellInput(row, rowIdx, col, colIdx, conv) {
 export function renderGrid(tbody, rows, side, conv = null) {
   const columns = columnsFor(conv);
   const cls = side === 'L' ? 'side-l' : 'side-r';
+  const numbers = sideNumbers(rows);
   tbody.replaceChildren(...sideIndexes(rows, side).map((i) =>
-    h('tr', { class: cls }, columns.map((col, c) => cellInput(rows[i], i, col, c, conv)))));
+    h('tr', { class: cls }, columns.map((col, c) => cellInput(rows[i], i, numbers[i], col, c, conv)))));
 }
 
 function markInvalid(el, bad) {

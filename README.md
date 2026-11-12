@@ -226,8 +226,8 @@ The solve response (abridged):
   "session_id": 1,
   "orientation": "Start at Rim Seam. View from Rotor Side. Count CW.",
   "actions": [
-    {"spoke_index": 5, "side": "L", "turns": 0.5, "fraction": "+1/2",
-     "direction": "tighten", "instruction": "Spoke L5: +1/2 turn (Tighten)",
+    {"spoke_index": 5, "side": "L", "side_spoke_number": 3, "turns": 0.5, "fraction": "+1/2",
+     "direction": "tighten", "instruction": "Spoke L3: +1/2 turn (Tighten)",
      "predicted_tension_kgf": 126, "tension_warning": true}
   ],
   "turns": [0, 0, ...], "raw_turns": [0.01, -0.03, ...],
@@ -246,6 +246,8 @@ The solve response (abridged):
 ```
 
 `tension_limit_*_kgf` are the effective per-side caps that the solver enforced (`0` = none). `tension_warning` ("Approaching Max Rim Tension") is set when `max_tension_kgf > 0` and the predicted tension is at least 95% of it. `POST /api/geometry` accepts a profile body and returns the `geometry` object alone. The UI uses it for a live preview.
+
+In solve actions, `spoke_index` is the global 1–N position used by the solver, while `side_spoke_number` and the human-readable instruction number spokes independently on each flange.
 
 Component library (`GET /api/components/hubs`, abridged):
 
@@ -293,7 +295,7 @@ Truing is iterative: apply the plan, re-measure, and solve again in a new sessio
 - **Tensiometer mode:** pick a tensiometer and per-side spoke gauges. The tension column then takes raw readings (also through clipboard paste) and shows the converted `≈ kgf` beside each cell. Out-of-range readings are marked invalid with the calibrated range.
 - **Rim limit:** actions and predictions at ≥ 95% of the rim's max tension are flagged with ⚠️ *Approaching Max Rim Tension*.
 - **Desired max tension:** a cap in kgf or in tensiometer units (e.g. TC‑02 reading 2.85). The results show the enforced per-side caps (*Tension cap (desired limit / rim max): Left ≤ 105 kgf · Right ≤ 105 kgf*).
-- **Split measurement tables:** *Left side — rotor* and *Right side*, for both front and rear wheels. The *Spoke #1 is on* toggle sets which side spoke 1 belongs to; the sides alternate from there. Rows keep their global spoke number.
+- **Split measurement tables:** *Left side — rotor* and *Right side*, for both front and rear wheels. The *Spoke #1 is on* toggle sets which side spoke 1 belongs to; the sides alternate from there. The UI numbers spokes separately on each side (L1–L14 / R1–R14 on a 28-spoke wheel); API `spoke_index` remains the global 1–N position.
 - **Bulk list input:** each side has a field for a list such as `[3.15,3.16,3.05,…]` (brackets optional; separators `,` or whitespace, or `;` when values use decimal commas) and a column picker (tension/reading, lateral, radial). Values fill that side's spokes in order; too many values or a non-number is rejected with a message. Clipboard paste from Excel also walks down the same side.
 - **Persistence:** the profile form, the measurement grid and the last result are stored in `localStorage` (`wheel-tuner:state`) and restored after a page reload. Corrupt or foreign data is ignored, never overwritten before a successful restore.
 

@@ -66,6 +66,11 @@ func (a Action) Fraction() string { return FormatTurns(a.Turns) }
 // Instruction renders the action for the mechanic,
 // e.g. "Spoke R14: +1/2 turn (Tighten)".
 func (a Action) Instruction() string {
+	return a.InstructionWithSpokeNumber(a.Spoke)
+}
+
+// InstructionWithSpokeNumber renders the action with a caller-provided spoke number.
+func (a Action) InstructionWithSpokeNumber(spokeNumber int) string {
 	unit := "turn"
 	if math.Abs(a.Turns) > 1 {
 		unit = "turns"
@@ -74,5 +79,5 @@ func (a Action) Instruction() string {
 	if a.Tighten() {
 		verb = "Tighten"
 	}
-	return fmt.Sprintf("Spoke %s%d: %s %s (%s)", a.Side, a.Spoke, a.Fraction(), unit, verb)
+	return fmt.Sprintf("Spoke %s%d: %s %s (%s)", a.Side, spokeNumber, a.Fraction(), unit, verb)
 }

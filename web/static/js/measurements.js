@@ -50,6 +50,15 @@ export function sideIndexes(rows, side) {
   return rows.flatMap((r, i) => (r.side === side ? [i] : []));
 }
 
+/** Side-local display numbers for rows, while spoke_index remains global. */
+export function sideNumbers(rows) {
+  const counts = { L: 0, R: 0 };
+  return rows.map((row) => {
+    counts[row.side] += 1;
+    return counts[row.side];
+  });
+}
+
 /** Builds grid rows from stored API measurements. */
 export function rowsFromMeasurements(ms, n) {
   const rows = defaultRows(n);
