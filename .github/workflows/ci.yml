@@ -68,7 +68,8 @@ jobs:
 
   # Branches and pull requests: build the images only. This job never sees
   # registry credentials.
-  images:
+  build-images:
+    name: build image (${{ matrix.image }})
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     needs: smoke
     runs-on: ubuntu-latest
@@ -90,6 +91,16 @@ jobs:
           file: ${{ matrix.file }}
           push: false
           cache-from: type=gha,scope=${{ matrix.image }}
+
+  # Stable check name for branch rulesets: matrix jobs report as
+  # "name (matrix values)", so a required check "images" would never arrive.
+  images:
+    if: always() && (github.event_name != 'push' || github.ref != 'refs/heads/main')
+    needs: build-images
+    runs-on: ubuntu-latest
+    steps:
+      - name: all image builds succeeded
+        run: test "${{ needs.build-images.result }}" = success
 
   # Push to main (i.e. after a merge): build and publish to quay.io. The
   # credentials live in the protected "quay" environment, which only main may

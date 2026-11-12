@@ -49,7 +49,7 @@ docker compose down
 1. `go` — gofmt, vet, golangci-lint, `go test -race` with coverage.
 2. `web` — JS tests with coverage.
 3. `smoke` — `docker compose up --build`, then checks `/livez`, `/healthz`, `/`, `/api/tensiometers` and `/api/components/hubs` through the web proxy.
-4. `images` (branches and pull requests) — builds both images (matrix `api`, `web`) without pushing. It has no access to registry credentials.
+4. `build-images` (branches and pull requests) — builds both images (matrix `api`, `web`) without pushing. It has no access to registry credentials. The `images` job aggregates the matrix into one stable check name for the ruleset (matrix jobs report as `build image (…)`).
 5. `publish` (push to `main` only, i.e. after a merge) — builds and pushes `quay.io/<namespace>/wheel-tuner-{api,web}` with tags `sha-<short>` and `latest`. It runs in the protected `quay` environment.
 
 Repository setup. The repo is public, so the credentials are **environment secrets**, not repository secrets:
