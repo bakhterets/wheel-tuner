@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"errors"
 	"net/http"
 
 	"github.com/bakhterets/wheel-tuner/internal/model"
@@ -16,6 +18,36 @@ func prepareWheel(w *model.WheelSetup) error {
 	}
 	sw := toSolverWheel(*w)
 	return sw.Validate()
+}
+
+// checkComponents verifies that the library components a profile refers to exist.
+func (s *Server) checkComponents(ctx context.Context, w model.WheelSetup) error {
+	if w.RimComponentID != nil {
+		if _, err := s.repo.GetRim(ctx, *w.RimComponentID); err != nil {
+			return componentErr("rim_component_id", err)
+		}
+	}
+	if w.HubComponentID != nil {
+		if _, err := s.repo.GetHub(ctx, *w.HubComponentID); err != nil {
+			return componentErr("hub_component_id", err)
+		}
+	}
+	return nil
+}
+
+func componentErr(field string, err error) error {
+	if errors.Is(err, model.ErrNotFound) {
+		return &model.ValidationError{Field: field, Message: "unknown component"}
+	}
+	return err
+}
+
+// storeWheel prepares a profile from the request body for create or update.
+func (s *Server) storeWheel(r *http.Request, w *model.WheelSetup) error {
+	if err := prepareWheel(w); err != nil {
+		return err
+	}
+	return s.checkComponents(r.Context(), *w)
 }
 
 func (s *Server) listWheels(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +66,7 @@ func (s *Server) createWheel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.ID = 0
-	if err := prepareWheel(&in); err != nil {
+	if err := s.storeWheel(r, &in); err != nil {
 		s.fail(w, r, err)
 		return
 	}
@@ -72,7 +104,7 @@ func (s *Server) updateWheel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.ID = id
-	if err := prepareWheel(&in); err != nil {
+	if err := s.storeWheel(r, &in); err != nil {
 		s.fail(w, r, err)
 		return
 	}
@@ -97,7 +129,7 @@ func (s *Server) deleteWheel(w http.ResponseWriter, r *http.Request) {
 }
 
 // toSolverWheel converts a profile that already passed WheelSetup.Validate,
-// which guarantees a known counting direction and view point.
+// which guarantees a known counting direction, view point and spoke type.
 func toSolverWheel(w model.WheelSetup) solver.Wheel {
 	dir := solver.Clockwise
 	if w.CountingDirection == "CCW" {
@@ -107,13 +139,21 @@ func toSolverWheel(w model.WheelSetup) solver.Wheel {
 	if w.ViewSide() == "R" {
 		view = solver.Right
 	}
+	spoke := solver.JBend
+	if w.SpokeType == model.SpokeStraightPull {
+		spoke = solver.StraightPull
+	}
 	return solver.Wheel{
-		SpokeCount:    w.SpokesCount,
-		ERDMM:         w.ERDMM,
-		Cross:         w.CrossPattern,
-		FlangeLeftMM:  w.FlangeDistLeftMM,
-		FlangeRightMM: w.FlangeDistRightMM,
-		Direction:     dir,
-		ViewFrom:      view,
+		SpokeCount:        w.SpokesCount,
+		ERDMM:             w.ERDMM,
+		Cross:             w.CrossPattern,
+		FlangeLeftMM:      w.FlangeDistLeftMM,
+		FlangeRightMM:     w.FlangeDistRightMM,
+		FlangeDiamLeftMM:  w.FlangeDiamLeftMM,
+		FlangeDiamRightMM: w.FlangeDiamRightMM,
+		RimOffsetMM:       w.RimAsymmetryOffsetMM,
+		SpokeType:         spoke,
+		Direction:         dir,
+		ViewFrom:          view,
 	}
 }

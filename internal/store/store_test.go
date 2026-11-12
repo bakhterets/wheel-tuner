@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -37,12 +38,13 @@ func wheel(name string) model.WheelSetup {
 		StartReference:    "Rim Seam",
 		ViewPoint:         "Rotor Side",
 		CountingDirection: "CCW",
+		SpokeType:         model.SpokeJBend,
 	}
 }
 
 func measurements() []model.Measurement {
 	return []model.Measurement{
-		{SpokeIndex: 1, Side: "L", TensionKgf: 100, LateralDevMM: 0.5, LatPeakBetweenNext: true},
+		{SpokeIndex: 1, Side: "L", TensionKgf: 102, TensionReading: ptr(2.8), LateralDevMM: 0.5, LatPeakBetweenNext: true},
 		{SpokeIndex: 2, Side: "R", TensionKgf: 120, RadialDevMM: -0.2, RadPeakBetweenNext: true},
 		{SpokeIndex: 3, Side: "L", TensionKgf: 98},
 		{SpokeIndex: 4, Side: "R", TensionKgf: 125},
@@ -69,19 +71,22 @@ func TestWheelCRUD(t *testing.T) {
 		t.Fatalf("ids %d, %d", a.ID, b.ID)
 	}
 	got, err := s.GetWheel(ctx, b.ID)
-	if err != nil || got != b {
+	if err != nil || !reflect.DeepEqual(got, b) {
 		t.Fatalf("GetWheel = %+v, %v; want %+v", got, err, b)
 	}
 	list, err = s.ListWheels(ctx)
-	if err != nil || len(list) != 2 || list[0] != a || list[1] != b {
+	if err != nil || len(list) != 2 || !reflect.DeepEqual(list, []model.WheelSetup{a, b}) {
 		t.Fatalf("ListWheels = %+v, %v", list, err)
 	}
 
 	b.Name, b.CrossPattern, b.CountingDirection = "b-rear-2", 3, "CW"
+	b.RimComponentID, b.HubComponentID, b.RimAsymmetryOffsetMM = ptr(int64(1)), ptr(int64(2)), 2.5
+	b.FlangeDiamLeftMM, b.FlangeDiamRightMM, b.SpokeType, b.MaxTensionKgf = 38.5, 38.5, model.SpokeStraightPull, 122
+	b.Tensiometer, b.SpokeGaugeLeft, b.SpokeGaugeRight = "ztto-tc-02", "2.0-1.8-2.0", "1.8"
 	if err := s.UpdateWheel(ctx, b); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.GetWheel(ctx, b.ID); err != nil || got != b {
+	if got, err := s.GetWheel(ctx, b.ID); err != nil || !reflect.DeepEqual(got, b) {
 		t.Fatalf("after update %+v (err %v), want %+v", got, err, b)
 	}
 
@@ -100,6 +105,8 @@ func TestWheelCRUD(t *testing.T) {
 }
 
 func second[T any](_ T, err error) error { return err }
+
+func ptr[T any](v T) *T { return &v }
 
 func TestSessionLifecycle(t *testing.T) {
 	ctx := context.Background()
@@ -126,7 +133,7 @@ func TestSessionLifecycle(t *testing.T) {
 		t.Fatalf("got %d measurements", len(got.Measurements))
 	}
 	for i, m := range got.Measurements {
-		if m != sess.Measurements[i] || m.SessionID != sess.ID || m.ID == 0 {
+		if !reflect.DeepEqual(m, sess.Measurements[i]) || m.SessionID != sess.ID || m.ID == 0 {
 			t.Fatalf("measurement %d = %+v, want %+v", i, m, sess.Measurements[i])
 		}
 	}
@@ -218,6 +225,10 @@ func TestClosedStoreErrors(t *testing.T) {
 		"create session": second(s.CreateSession(ctx, 1, nil)),
 		"get session":    second(s.GetSession(ctx, 1)),
 		"list sessions":  second(s.ListSessions(ctx, 1)),
+		"list rims":      second(s.ListRims(ctx)),
+		"get rim":        second(s.GetRim(ctx, 1)),
+		"list hubs":      second(s.ListHubs(ctx)),
+		"get hub":        second(s.GetHub(ctx, 1)),
 		"delete session": s.DeleteSession(ctx, 1),
 	}
 	for name, err := range checks {
@@ -284,7 +295,7 @@ func TestOpenFilePersists(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	if got, err := s.GetWheel(ctx, w.ID); err != nil || got != w {
+	if got, err := s.GetWheel(ctx, w.ID); err != nil || !reflect.DeepEqual(got, w) {
 		t.Fatalf("reopened wheel = %+v, %v", got, err)
 	}
 }

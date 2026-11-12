@@ -9,14 +9,28 @@ export const DEFAULT_WHEEL = Object.freeze({
   cross_pattern: 3,
   flange_dist_left_mm: 35,
   flange_dist_right_mm: 20,
+  flange_diam_left_mm: 0,
+  flange_diam_right_mm: 0,
+  spoke_type: 'J-Bend',
+  rim_asymmetry_offset_mm: 0,
+  max_tension_kgf: 0,
+  rim_component_id: null,
+  hub_component_id: null,
+  tensiometer: '',
+  spoke_gauge_left: '',
+  spoke_gauge_right: '',
   start_reference: 'Rim Seam',
   view_point: 'Rotor Side',
   counting_direction: 'CW',
 });
 
-const NUMERIC = ['spokes_count', 'erd_mm', 'cross_pattern', 'flange_dist_left_mm', 'flange_dist_right_mm'];
+const NUMERIC = new Set([
+  'id', 'spokes_count', 'erd_mm', 'cross_pattern', 'flange_dist_left_mm', 'flange_dist_right_mm',
+  'flange_diam_left_mm', 'flange_diam_right_mm', 'rim_asymmetry_offset_mm', 'max_tension_kgf',
+]);
+const COMPONENT_IDS = new Set(['rim_component_id', 'hub_component_id']);
 
-/** Reads the profile form into an API wheel object. */
+/** Reads the profile form into an API wheel object; empty component ids are null. */
 export function readForm(form) {
   const fd = new FormData(form);
   const w = { ...DEFAULT_WHEEL };
@@ -25,7 +39,11 @@ export function readForm(form) {
     if (v === null) {
       continue;
     }
-    w[key] = NUMERIC.includes(key) || key === 'id' ? Number(String(v).replace(',', '.')) : String(v);
+    if (COMPONENT_IDS.has(key)) {
+      w[key] = Number(v) > 0 ? Number(v) : null;
+    } else {
+      w[key] = NUMERIC.has(key) ? Number(String(v).replace(',', '.')) : String(v);
+    }
   }
   return w;
 }
@@ -47,7 +65,7 @@ export function fillForm(form, wheel) {
         field[0].checked = true;
       }
     } else {
-      field.value = String(value);
+      field.value = value === null ? '' : String(value);
     }
   }
 }

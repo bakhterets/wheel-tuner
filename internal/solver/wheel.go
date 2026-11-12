@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 )
 
 // ErrInvalidInput is wrapped by every validation error returned by the package.
@@ -58,6 +59,13 @@ func (s Side) String() string { return string(rune(s)) }
 
 func (s Side) valid() bool { return s == Left || s == Right }
 
+func (s Side) name() string {
+	if s == Right {
+		return "Right"
+	}
+	return "Left"
+}
+
 // pull is the lateral direction a tightened spoke moves the rim:
 // positive lateral deviation means "towards the right flange".
 func (s Side) pull() float64 {
@@ -97,6 +105,40 @@ func (d Direction) String() string {
 	return fmt.Sprintf("Direction(%d)", int(d))
 }
 
+// SpokeType is the way spokes are anchored in the hub.
+type SpokeType int
+
+// Spoke types. The zero value is the classic J-bend spoke.
+const (
+	JBend SpokeType = iota
+	StraightPull
+)
+
+// ParseSpokeType converts "J-Bend"/"Straightpull" (case-insensitive) into a SpokeType.
+func ParseSpokeType(s string) (SpokeType, error) {
+	switch strings.ToLower(s) {
+	case "j-bend":
+		return JBend, nil
+	case "straightpull":
+		return StraightPull, nil
+	}
+	return 0, invalidf("unknown spoke type %q (want J-Bend or Straightpull)", s)
+}
+
+func (t SpokeType) String() string {
+	switch t {
+	case JBend:
+		return "J-Bend"
+	case StraightPull:
+		return "Straightpull"
+	}
+	return fmt.Sprintf("SpokeType(%d)", int(t))
+}
+
+// jBendHoleRadiusMM is subtracted from the geometric length of J-bend spokes:
+// the elbow sits on the outer edge of a ≈2.4 mm flange hole, not its centre.
+const jBendHoleRadiusMM = 1.2
+
 // Wheel holds the physical parameters that shape the influence matrix.
 type Wheel struct {
 	SpokeCount    int
@@ -104,8 +146,17 @@ type Wheel struct {
 	Cross         int
 	FlangeLeftMM  float64 // distance from hub centre to the left flange
 	FlangeRightMM float64 // distance from hub centre to the right flange
-	Direction     Direction
-	ViewFrom      Side // side of the wheel the mechanic is looking from
+	// Flange pitch circle diameters. Zero means unknown: the spoke is then
+	// modelled from the hub axis, which slightly overestimates its length.
+	FlangeDiamLeftMM  float64
+	FlangeDiamRightMM float64
+	// RimOffsetMM is the asymmetric rim's spoke bed offset. A positive value
+	// moves the spoke holes towards the left flange, which narrows the left
+	// bracing angle and widens the right one.
+	RimOffsetMM float64
+	SpokeType   SpokeType
+	Direction   Direction
+	ViewFrom    Side // side of the wheel the mechanic is looking from
 }
 
 // Validate checks that the wheel describes a buildable geometry.
@@ -125,13 +176,24 @@ func (w Wheel) Validate() error {
 		return invalidf("cross %d on %d spokes gives %.0f° hub offset (max %.0f°)",
 			w.Cross, w.SpokeCount, off, MaxHubOffsetDeg)
 	}
-	for _, f := range [...]struct {
-		name string
-		v    float64
-	}{{"left", w.FlangeLeftMM}, {"right", w.FlangeRightMM}} {
-		if !(f.v > 0 && f.v < w.ERDMM/2) {
-			return invalidf("%s flange distance %.1f mm out of range (0, ERD/2)", f.name, f.v)
+	if math.IsNaN(w.RimOffsetMM) || math.IsInf(w.RimOffsetMM, 0) {
+		return invalidf("rim offset must be finite")
+	}
+	for _, side := range [...]Side{Left, Right} {
+		name := strings.ToLower(side.name())
+		if f := w.flangeDist(side); !(f > 0 && f < w.ERDMM/2) {
+			return invalidf("%s flange distance %.1f mm out of range (0, ERD/2)", name, f)
 		}
+		if f := w.effectiveFlange(side); !(f > 0 && f < w.ERDMM/2) {
+			return invalidf("%s flange distance with rim offset %.1f mm is %.1f mm, out of range (0, ERD/2)",
+				name, w.RimOffsetMM, f)
+		}
+		if d := w.flangeDiam(side); !(d >= 0 && d < w.ERDMM/2) {
+			return invalidf("%s flange diameter %.1f mm out of range [0, ERD/2)", name, d)
+		}
+	}
+	if w.SpokeType != JBend && w.SpokeType != StraightPull {
+		return invalidf("invalid spoke type %d", int(w.SpokeType))
 	}
 	if w.Direction != Clockwise && w.Direction != CounterClockwise {
 		return invalidf("invalid counting direction %d", int(w.Direction))
@@ -160,13 +222,27 @@ func (w Wheel) rotationSense() int {
 	return s
 }
 
-// bracingAngle returns the spoke bracing angle for a flange side in radians.
-func (w Wheel) bracingAngle(s Side) float64 {
-	f := w.FlangeLeftMM
+func (w Wheel) flangeDist(s Side) float64 {
 	if s == Right {
-		f = w.FlangeRightMM
+		return w.FlangeRightMM
 	}
-	return math.Atan2(f, w.ERDMM/2)
+	return w.FlangeLeftMM
+}
+
+func (w Wheel) flangeDiam(s Side) float64 {
+	if s == Right {
+		return w.FlangeDiamRightMM
+	}
+	return w.FlangeDiamLeftMM
+}
+
+// effectiveFlange is the lateral distance between a flange and the rim's
+// spoke bed: F_left = flange_left − offset, F_right = flange_right + offset.
+func (w Wheel) effectiveFlange(s Side) float64 {
+	if s == Right {
+		return w.FlangeRightMM + w.RimOffsetMM
+	}
+	return w.FlangeLeftMM - w.RimOffsetMM
 }
 
 // spacingMM is the rim arc length between two neighbouring spoke holes.

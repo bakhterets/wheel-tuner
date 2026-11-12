@@ -55,7 +55,7 @@ describe('applyPaste', () => {
     const { rows: out, errors } = applyPaste(rows, 1, sideCol, parseTable('L\t120\t0,3\tx\t-0.1\t\nR\t118\t-0.2\t\t0\t1'));
     assert.deepEqual(errors, []);
     assert.deepEqual(out[1], {
-      spoke_index: 2, side: 'L', tension_kgf: 120, lateral_dev_mm: 0.3,
+      spoke_index: 2, side: 'L', tension_kgf: 120, tension_reading: null, lateral_dev_mm: 0.3,
       lat_peak_between_next: true, radial_dev_mm: -0.1, rad_peak_between_next: false,
     });
     assert.equal(out[2].tension_kgf, 118);

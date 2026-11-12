@@ -42,5 +42,9 @@ export function createClient(fetchImpl = (...args) => globalThis.fetch(...args),
     getSession: (id) => request('GET', `/api/sessions/${id}`),
     solveSession: (id) => request('POST', `/api/sessions/${id}/solve`),
     solve: (wheel, measurements) => request('POST', '/api/solve', { wheel, measurements }),
+    listRims: () => request('GET', '/api/components/rims'),
+    listHubs: () => request('GET', '/api/components/hubs'),
+    listTensiometers: () => request('GET', '/api/tensiometers'),
+    geometry: (wheel) => request('POST', '/api/geometry', wheel),
   };
 }

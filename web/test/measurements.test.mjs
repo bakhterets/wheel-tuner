@@ -37,11 +37,23 @@ describe('measurement rows', () => {
     const rows = rowsFromMeasurements(ms, 3);
     assert.equal(rows.length, 3);
     assert.deepEqual(rows[1], {
-      spoke_index: 2, side: 'L', tension_kgf: null, lateral_dev_mm: 0.2,
+      spoke_index: 2, side: 'L', tension_kgf: null, tension_reading: null, lateral_dev_mm: 0.2,
       lat_peak_between_next: true, radial_dev_mm: -0.1, rad_peak_between_next: false,
     });
     assert.equal(rows[0].side, 'L');
     const { id: _id, session_id: _sid, ...payload } = ms[0];
     assert.deepEqual(toMeasurements(rows)[1], payload);
+  });
+
+  it('carries tensiometer readings both ways', () => {
+    const ms = [{ spoke_index: 1, side: 'L', tension_kgf: 102, tension_reading: 2.8, lateral_dev_mm: 0, radial_dev_mm: 0 }];
+    const rows = rowsFromMeasurements(ms, 2);
+    assert.equal(rows[0].tension_reading, 2.8);
+    assert.equal(rows[1].tension_reading, null);
+    const out = toMeasurements(rows);
+    assert.equal(out[0].tension_reading, 2.8);
+    assert.equal(out[0].tension_kgf, 102);
+    assert.ok(!('tension_reading' in out[1]), 'no reading is sent for kgf rows');
+    assert.ok(!('tension_reading' in toMeasurements([{ ...rows[1], tension_reading: undefined }])[0]));
   });
 });

@@ -15,7 +15,14 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schema = `
+// migrations are applied in order; PRAGMA user_version records how many ran.
+// Version 1 is the stage-01 schema: its IF NOT EXISTS clauses make it a no-op
+// on databases created before versioning was introduced.
+func migrations() []string {
+	return []string{schemaV1, schemaV2}
+}
+
+const schemaV1 = `
 CREATE TABLE IF NOT EXISTS wheel_setups (
 	id                   INTEGER PRIMARY KEY AUTOINCREMENT,
 	name                 TEXT    NOT NULL,
@@ -50,6 +57,53 @@ CREATE TABLE IF NOT EXISTS measurements (
 );
 `
 
+// schemaV2 adds the component library, rim/hub geometry and tensiometer
+// settings of a profile, and raw tensiometer readings. hole_counts is a
+// comma-separated list ("28,32").
+const schemaV2 = `
+CREATE TABLE rim_components (
+	id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+	brand               TEXT NOT NULL,
+	model               TEXT NOT NULL,
+	wheel_size          TEXT NOT NULL DEFAULT '',
+	hole_counts         TEXT NOT NULL DEFAULT '',
+	erd_mm              REAL NOT NULL,
+	asymmetry_offset_mm REAL NOT NULL DEFAULT 0,
+	max_tension_kgf     REAL NOT NULL DEFAULT 0,
+	source              TEXT NOT NULL DEFAULT '',
+	UNIQUE (brand, model, wheel_size)
+);
+
+CREATE TABLE hub_components (
+	id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+	brand                TEXT NOT NULL,
+	model                TEXT NOT NULL,
+	position             TEXT NOT NULL CHECK (position IN ('front', 'rear')),
+	axle                 TEXT NOT NULL DEFAULT '',
+	flange_dist_left_mm  REAL NOT NULL,
+	flange_dist_right_mm REAL NOT NULL,
+	flange_diam_left_mm  REAL NOT NULL DEFAULT 0,
+	flange_diam_right_mm REAL NOT NULL DEFAULT 0,
+	spoke_type           TEXT NOT NULL DEFAULT 'J-Bend' CHECK (spoke_type IN ('J-Bend', 'Straightpull')),
+	hole_counts          TEXT NOT NULL DEFAULT '',
+	source               TEXT NOT NULL DEFAULT '',
+	UNIQUE (brand, model)
+);
+
+ALTER TABLE wheel_setups ADD COLUMN rim_component_id INTEGER REFERENCES rim_components(id) ON DELETE SET NULL;
+ALTER TABLE wheel_setups ADD COLUMN hub_component_id INTEGER REFERENCES hub_components(id) ON DELETE SET NULL;
+ALTER TABLE wheel_setups ADD COLUMN rim_asymmetry_offset_mm REAL NOT NULL DEFAULT 0;
+ALTER TABLE wheel_setups ADD COLUMN flange_diam_left_mm REAL NOT NULL DEFAULT 0;
+ALTER TABLE wheel_setups ADD COLUMN flange_diam_right_mm REAL NOT NULL DEFAULT 0;
+ALTER TABLE wheel_setups ADD COLUMN spoke_type TEXT NOT NULL DEFAULT 'J-Bend';
+ALTER TABLE wheel_setups ADD COLUMN max_tension_kgf REAL NOT NULL DEFAULT 0;
+ALTER TABLE wheel_setups ADD COLUMN tensiometer TEXT NOT NULL DEFAULT '';
+ALTER TABLE wheel_setups ADD COLUMN spoke_gauge_left TEXT NOT NULL DEFAULT '';
+ALTER TABLE wheel_setups ADD COLUMN spoke_gauge_right TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE measurements ADD COLUMN tension_reading REAL;
+`
+
 // Store is a SQLite-backed repository. It is safe for concurrent use.
 type Store struct {
 	db  *sql.DB
@@ -64,8 +118,9 @@ func WithClock(now func() time.Time) Option {
 	return func(s *Store) { s.now = now }
 }
 
-// Open opens (creating if needed) the database at path and applies the
-// schema. An empty path or ":memory:" opens a private in-memory database.
+// Open opens (creating if needed) the database at path, migrates its schema
+// and refreshes the component library. An empty path or ":memory:" opens a
+// private in-memory database.
 func Open(ctx context.Context, path string, opts ...Option) (*Store, error) {
 	if path == "" {
 		path = ":memory:"
@@ -80,14 +135,47 @@ func Open(ctx context.Context, path string, opts ...Option) (*Store, error) {
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
 	db.SetConnMaxIdleTime(0)
-	if _, err := db.ExecContext(ctx, schema); err != nil {
-		return nil, errors.Join(fmt.Errorf("apply schema: %w", err), db.Close())
+	if err := migrate(ctx, db, migrations()); err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
+	if err := seedComponents(ctx, db, rimSeeds(), hubSeeds()); err != nil {
+		return nil, errors.Join(err, db.Close())
 	}
 	s := &Store{db: db, now: time.Now}
 	for _, o := range opts {
 		o(s)
 	}
 	return s, nil
+}
+
+// migrate applies the pending steps, each in its own transaction.
+func migrate(ctx context.Context, db *sql.DB, steps []string) error {
+	var version int
+	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	if version > len(steps) {
+		return fmt.Errorf("schema version %d is newer than this build supports (%d)", version, len(steps))
+	}
+	for v := version; v < len(steps); v++ {
+		if err := migrateStep(ctx, db, v+1, steps[v]); err != nil {
+			return fmt.Errorf("migrate schema to version %d: %w", v+1, err)
+		}
+	}
+	return nil
+}
+
+func migrateStep(ctx context.Context, db *sql.DB, version int, ddl string) (err error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer rollback(tx, &err)
+	// PRAGMA does not accept bound parameters; version is an int.
+	if _, err := tx.ExecContext(ctx, ddl+fmt.Sprintf("\nPRAGMA user_version = %d;", version)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Close releases the database.

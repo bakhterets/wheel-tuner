@@ -2,6 +2,8 @@
 
 A bicycle wheel truing solver. You enter the spoke tensions, the lateral (wobble) and the radial (hop) runout. The service returns a step-by-step plan in fractional nipple turns (`+1/4`, `-1/2`, …) that removes runout and evens out tension. See [spec.md](spec.md) for the requirements.
 
+Tensions can be entered in kgf or as raw tensiometer readings (ZTTO TC‑02, Park Tool TM‑1), which are converted with the manufacturer's calibration table. A built-in component library (DT Swiss rims, Newmen and DT Swiss hubs) fills the wheel geometry, and the solver derives spoke lengths, bracing angles and the expected left/right tension ratio from it. Development history: [dev_stages/](dev_stages/).
+
 - **Backend:** Go 1.25, `net/http` (no frameworks), `log/slog`, SQLite.
 - **Frontend:** HTML5 + vanilla JS (ES modules) + CSS, SVG visualizations. Embedded in the binary via `go:embed`.
 
@@ -38,9 +40,10 @@ CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs gofmt, vet, golan
 | Path                | Contents                                                                 |
 |---------------------|--------------------------------------------------------------------------|
 | `cmd/wheel-tuner`   | entry point: flags, logger, HTTP server, graceful shutdown               |
-| `internal/solver`   | pure math: influence matrix, LSQ solver, quantization into turns         |
+| `internal/solver`   | pure math: spoke geometry, influence matrix, LSQ solver, quantization    |
+| `internal/tensiometer` | tensiometer calibration tables and reading → kgf conversion           |
 | `internal/model`    | domain entities and input validation                                     |
-| `internal/store`    | SQLite repository (migrations, CRUD, transactions)                       |
+| `internal/store`    | SQLite repository (migrations, component seeds, CRUD, transactions)      |
 | `internal/api`      | HTTP handlers, DTOs, middleware (logging, recover, security headers)     |
 | `web`               | static frontend + `embed.go`                                             |
 
@@ -62,22 +65,46 @@ Errors come as `{"error": "...", "field": "..."}`. Codes: `400` invalid input, `
 | `DELETE` | `/api/sessions/{id}`          | delete a session → `204`                             |
 | `POST`   | `/api/sessions/{id}/solve`    | solve a saved session                                |
 | `POST`   | `/api/solve`                  | stateless solve: `{"wheel": {...}, "measurements": [...]}` |
+| `POST`   | `/api/geometry`               | spoke geometry of an (unsaved) profile               |
+| `GET`    | `/api/components/rims`        | rim library                                          |
+| `GET`    | `/api/components/rims/{id}`   | one rim                                              |
+| `GET`    | `/api/components/hubs`        | hub library                                          |
+| `GET`    | `/api/components/hubs/{id}`   | one hub                                              |
+| `GET`    | `/api/tensiometers`           | tensiometers with their calibration tables           |
 
-Profile:
+Profile (the first nine fields are required; the rest are optional and shown with example values):
 
 ```json
 {
-  "name": "Front 32H 3x",
-  "spokes_count": 32,
-  "erd_mm": 600,
-  "cross_pattern": 3,
-  "flange_dist_left_mm": 35,
-  "flange_dist_right_mm": 20,
+  "name": "Front F 572 / Fade SP",
+  "spokes_count": 28,
+  "erd_mm": 602,
+  "cross_pattern": 2,
+  "flange_dist_left_mm": 29,
+  "flange_dist_right_mm": 34,
   "start_reference": "Rim Seam",
   "view_point": "Rotor Side",
-  "counting_direction": "CCW"
+  "counting_direction": "CW",
+
+  "rim_component_id": 2,
+  "hub_component_id": 1,
+  "rim_asymmetry_offset_mm": 0,
+  "flange_diam_left_mm": 38.5,
+  "flange_diam_right_mm": 38.5,
+  "spoke_type": "Straightpull",
+  "max_tension_kgf": 122,
+  "tensiometer": "ztto-tc-02",
+  "spoke_gauge_left": "2.0-1.8-2.0",
+  "spoke_gauge_right": "2.0-1.8-2.0"
 }
 ```
+
+- `rim_component_id` / `hub_component_id` reference the library (`null` = custom). The profile keeps its **own copy** of the geometry, so library picks are only a starting point and every value stays editable. The IDs are checked to exist on create and update.
+- `rim_asymmetry_offset_mm`: offset of the spoke bed for asymmetric rims. `+` shifts it toward the left flange, which shortens the left flange distance and lengthens the right one.
+- `flange_diam_*_mm`: hub flange pitch-circle diameter (PCD). `0` models the spoke as starting at the hub axis (the stage 01 behaviour).
+- `spoke_type`: `J-Bend` (default) or `Straightpull`.
+- `max_tension_kgf`: the rim's tension limit (`0` = unknown, no warnings).
+- `tensiometer` + `spoke_gauge_*`: when set, measurements may carry `tension_reading` instead of `tension_kgf`. The gauge IDs come from `GET /api/tensiometers`.
 
 Session measurements: `POST /api/wheels/1/sessions` with `{"measurements": [...]}`. Each element looks like this:
 
@@ -89,32 +116,65 @@ Session measurements: `POST /api/wheels/1/sessions` with `{"measurements": [...]
 }
 ```
 
+With a tensiometer in the profile, send `"tension_reading": 3.0` instead. The server converts it to kgf by linear interpolation in the calibration table of that side's spoke gauge. A reading outside the table returns `400`, because extrapolating a non-linear calibration curve would give misleading tensions. The stored session keeps both the reading and the converted kgf, which is fixed at record time.
+
 The solve response (abridged):
 
 ```json
 {
   "session_id": 1,
-  "orientation": "Start at Rim Seam. View from Rotor Side. Count CCW.",
+  "orientation": "Start at Rim Seam. View from Rotor Side. Count CW.",
   "actions": [
-    {"spoke_index": 9, "side": "L", "turns": 0.25, "fraction": "+1/4",
-     "direction": "tighten", "instruction": "Spoke L9: +1/4 turn (Tighten)"}
+    {"spoke_index": 5, "side": "L", "turns": 0.5, "fraction": "+1/2",
+     "direction": "tighten", "instruction": "Spoke L5: +1/2 turn (Tighten)",
+     "predicted_tension_kgf": 126, "tension_warning": true}
   ],
   "turns": [0, 0, ...], "raw_turns": [0.01, -0.03, ...],
-  "before": {"max_lateral_mm": 0.76, "max_radial_mm": 0.4, "tension_spread_left_kgf": 6.05, "tension_spread_right_kgf": 0, "cost": 2.17},
-  "after":  {"max_lateral_mm": 0.25, "max_radial_mm": 0.36, "...": "..."},
-  "predicted": [{"spoke_index": 1, "side": "L", "tension_kgf": 115, "lateral_dev_mm": 0.01, "radial_dev_mm": -0.01}],
+  "before": {"max_lateral_mm": 0.6, "max_radial_mm": 0, "tension_spread_left_kgf": 2.39, "tension_spread_right_kgf": 0.9, "cost": 1.2},
+  "after":  {"max_lateral_mm": 0.15, "max_radial_mm": 0.12, "...": "..."},
+  "predicted": [{"spoke_index": 1, "side": "L", "tension_kgf": 115, "lateral_dev_mm": 0.01, "radial_dev_mm": -0.01, "tension_warning": false}],
+  "geometry": {
+    "left":  {"flange_offset_mm": 29, "spoke_length_mm": 290.8, "bracing_angle_deg": 5.72, "tension_per_turn_kgf": 24.8},
+    "right": {"flange_offset_mm": 34, "spoke_length_mm": 291.4, "bracing_angle_deg": 6.70, "tension_per_turn_kgf": 24.7},
+    "tension_ratio": 1.17
+  },
+  "max_tension_kgf": 122,
   "iterations": 12
 }
 ```
+
+`tension_warning` ("Approaching Max Rim Tension") is set when `max_tension_kgf > 0` and the predicted tension is at least 95% of it. `POST /api/geometry` accepts a profile body and returns the `geometry` object alone. The UI uses it for a live preview.
+
+Component library (`GET /api/components/hubs`, abridged):
+
+```json
+[{"id": 1, "brand": "Newmen", "model": "Fade SP Front 15x110 Boost 6-bolt/CL", "position": "front",
+  "axle": "15x110 Boost", "flange_dist_left_mm": 29, "flange_dist_right_mm": 34,
+  "flange_diam_left_mm": 38.5, "flange_diam_right_mm": 38.5, "spoke_type": "Straightpull",
+  "hole_counts": [28], "source": "https://www.newmen-components.de/..."}]
+```
+
+Rims carry `brand`, `model`, `wheel_size`, `hole_counts`, `erd_mm`, `asymmetry_offset_mm`, `max_tension_kgf` and `source`. The library is upserted on every start: data fixes ship with new builds, and row IDs stay stable.
+
+| Seeded data | Contents | Source |
+|-------------|----------|--------|
+| Rims | DT Swiss F 572, EX 511, XM 481, FR 541, XM 421, XR 391 in 27.5″ and 29″, 28/32H | DT Swiss product pages / spoke calculator; 1200 N ≈ 122 kgf limit from retailer data |
+| Hubs | Newmen Fade (SP/J-bend, front/rear, Boost/157), DT Swiss 180/240/350 (SP/J-bend, 6-bolt/CL, Boost and non-Boost) | Newmen *Hub_Flange_Dimensions.pdf*, DT Swiss spoke calculator |
+| Tensiometers | ZTTO TC‑02 (reading in mm, 7 spoke gauges incl. butted), Park Tool TM‑1 (scale reading, round steel 1.4–2.6 mm) | manufacturer conversion tables |
+
+The Newmen Fade SP front hub is made in **28H only**, so the library warns when it is paired with a 32H rim.
 
 ## Model and conventions
 
 **Signs.** Lateral `+` means toward the right (drive-side) flange. Radial `+` is a high spot (hop) relative to the mean radius; a uniform offset is ignored. Tightening a spoke pulls the rim toward its own flange and reduces the radius. Sides: `L` is the left / rotor / non-drive side, `R` is the right / drive side. The view point (`Rotor Side`, `Drive Side`, `Left`, `Right`, …) and the counting direction (`CW`/`CCW`) only affect the crossing topology and the instructions shown on screen.
 
-**Influence matrix** (`internal/solver/influence.go`):
-- The bracing angle comes from the flange distances and the ERD. It splits a spoke's pull into lateral and radial components. Lateral gain ∝ `1/sin β` and radial gain ∝ `cos β`.
+**Spoke geometry** (`internal/solver/geometry.go`). For each flange, the effective flange distance is `F_L = flange_left − rim_offset` and `F_R = flange_right + rim_offset`. The hub end of a crossed spoke is rotated by `θ = cross·720°/N`. Spoke length is `L = √(D² + F² + R² − 2·D·R·cos θ)`, with `D = PCD/2` and `R = ERD/2`; J-bend lengths subtract the 1.2 mm flange-hole radius. The bracing angle is `α = asin(F/L)`. A true wheel balances the lateral components, `T_L·sin α_L = T_R·sin α_R`, so the expected tension ratio is `T_L/T_R = sin α_R / sin α_L`.
+
+**Influence matrix** (`internal/solver/influence.go`), a force model:
+- One nipple turn adds `ΔT = SpokeRigidity·pitch / L` (Hooke's law; `16000 kgf · 0.45 mm / 290 mm ≈ 25 kgf/turn`).
+- The rim deflects through its compliance. Lateral gain is `±ΔT·sin α·C_lat`, toward the spoke's own flange. Radial gain is `−ΔT·(radial share)·C_rad`. Defaults are `C_lat = 0.3`, `C_rad = 0.012` mm/kgf. A spoke on the narrow, steep flange therefore moves the rim less laterally than one on the wide flange.
 - Influence decays exponentially along the rim arc. The arc length per spoke is `π·ERD/N`. Lateral influence spreads further (120 mm) than radial (50 mm).
-- Tension: the spoke being turned gains `25 kgf/turn`. Neighbours on the same flange lose a little, those on the opposite flange gain a little (`NeighborCoupling`). Spokes that cross it on the same flange gain a share as well (`CrossTalk`, per the cross pattern and counting direction).
+- Tension: neighbours on the same flange lose a little, those on the opposite flange gain a little (`NeighborCoupling`). Spokes that cross it on the same flange gain a share as well (`CrossTalk`, per the cross pattern and counting direction).
 
 **Inter-spoke peak** (`*_peak_between_next`). The value entered for spoke *i* is taken as the peak at point *i.5*. A virtual row `A[i.5][j] = (A[i][j] + A[i+1][j]) / 2` is added. The spoke-*i* row itself gets the mean of its neighbours.
 
@@ -122,7 +182,14 @@ The solve response (abridged):
 
 Truing is iterative: apply the plan, re-measure, and solve again in a new session. All constants (`solver.DefaultParams`) are empirical values for steel spokes and an alloy rim.
 
-**Validation.** The spoke count must be one of 20/24/28/32/36. ERD, cross pattern and flange distances must lie in physical ranges, and the cross pattern must fit the hub. Measurements must cover every spoke exactly once. Both flanges must have spokes (an all-L or all-R wheel is rejected). For a crossed lacing, each flange needs an even number of spokes, more than `2·cross−1`. Details are in `internal/solver/wheel.go` and `internal/model`.
+**Validation.** The spoke count must be one of 20/24/28/32/36. ERD, cross pattern, flange distances (after the rim offset) and flange diameters (`[0, ERD/2)`) must lie in physical ranges, and the cross pattern must fit the hub. Measurements must cover every spoke exactly once. Both flanges must have spokes (an all-L or all-R wheel is rejected). For a crossed lacing, each flange needs an even number of spokes, more than `2·cross−1`. A tensiometer needs a known gauge on both sides, and readings need a tensiometer. Details are in `internal/solver/wheel.go` and `internal/model`.
+
+## UI
+
+- **Component library:** brand/model pickers for the rim and the hub fill the profile fields, which stay editable. Notes flag hole-count mismatches, for example the Fade SP front hub (28H) with a 32H rim.
+- **Live geometry panel:** spoke lengths, flange offsets, bracing angles, ΔT per turn and the L/R tension ratio, recomputed as the fields change.
+- **Tensiometer mode:** pick a tensiometer and per-side spoke gauges. The tension column then takes raw readings (also through clipboard paste) and shows the converted `≈ kgf` beside each cell. Out-of-range readings are marked invalid with the calibrated range.
+- **Rim limit:** actions and predictions at ≥ 95% of the rim's max tension are flagged with ⚠️ *Approaching Max Rim Tension*.
 
 ## Deviations from the spec
 
@@ -130,14 +197,15 @@ Truing is iterative: apply the plan, re-measure, and solve again in a new sessio
 
 ## Test coverage
 
-| Package           | Coverage |
-|-------------------|----------|
-| `internal/solver` | 100%     |
-| `internal/model`  | 100%     |
-| `internal/api`    | 100%     |
-| `web` (embed)     | 100%     |
-| `internal/store`  | ~89%     |
-| `cmd/wheel-tuner` | ~77%     |
-| JS modules        | 100% lines/branches |
+| Package                | Coverage |
+|------------------------|----------|
+| `internal/solver`      | 100%     |
+| `internal/tensiometer` | 100%     |
+| `internal/model`       | 100%     |
+| `internal/api`         | 100%     |
+| `web` (embed)          | 100%     |
+| `internal/store`       | ~93%     |
+| `cmd/wheel-tuner`      | ~77%     |
+| JS modules             | 100% lines/branches/functions |
 
 Uncovered: SQLite driver error branches (`rows.Err`, `Scan`, `Commit` failures that cannot be reproduced without fault injection into the driver), and `main()` itself (all logic lives in `run()`, which is tested). `main.js` and `setup.js` are browser wiring, checked manually and end to end.

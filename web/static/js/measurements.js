@@ -13,6 +13,7 @@ export function emptyRow(index) {
     spoke_index: index,
     side: defaultSide(index),
     tension_kgf: null,
+    tension_reading: null,
     lateral_dev_mm: null,
     lat_peak_between_next: false,
     radial_dev_mm: null,
@@ -38,6 +39,7 @@ export function rowsFromMeasurements(ms, n) {
         spoke_index: m.spoke_index,
         side: m.side,
         tension_kgf: m.tension_kgf || null,
+        tension_reading: m.tension_reading ?? null,
         lateral_dev_mm: m.lateral_dev_mm,
         lat_peak_between_next: Boolean(m.lat_peak_between_next),
         radial_dev_mm: m.radial_dev_mm,
@@ -48,7 +50,10 @@ export function rowsFromMeasurements(ms, n) {
   return rows;
 }
 
-/** Converts grid rows to the API payload: empty deviations are 0, empty tension is 0 (unmeasured). */
+/**
+ * Converts grid rows to the API payload: empty deviations are 0, empty tension
+ * is 0 (unmeasured). Readings are sent as-is; the server converts them to kgf.
+ */
 export function toMeasurements(rows) {
   return rows.map((r) => ({
     spoke_index: r.spoke_index,
@@ -58,5 +63,6 @@ export function toMeasurements(rows) {
     lat_peak_between_next: r.lat_peak_between_next,
     radial_dev_mm: r.radial_dev_mm ?? 0,
     rad_peak_between_next: r.rad_peak_between_next,
+    ...(r.tension_reading === null || r.tension_reading === undefined ? {} : { tension_reading: r.tension_reading }),
   }));
 }

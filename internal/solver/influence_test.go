@@ -190,7 +190,10 @@ func TestTensionCrossTalkCoefficients(t *testing.T) {
 		{"radial lacing has no cross talk", 1, 3, 0, 0},
 	}
 	p := DefaultParams()
-	p.TensionPerTurnKgf, p.CrossTalk, p.NeighborCoupling = t0, ct, 0
+	p.CrossTalk, p.NeighborCoupling = ct, 0
+	// Every turned spoke in the table sits on the left flange: scale the
+	// rigidity so that it gains exactly t0 per turn.
+	p.SpokeRigidityKgf = t0 * (math.Hypot(35, 300) - jBendHoleRadiusMM) / p.ThreadPitchMM
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			inf, err := BuildInfluence(testWheel(32, tc.cross), alternating(32, 100), p)
@@ -232,10 +235,11 @@ func TestDeviationSignsAndAttenuation(t *testing.T) {
 	if !(left < 0 && right > 0) {
 		t.Fatalf("left spoke must pull left, right spoke right: %v, %v", left, right)
 	}
-	// The right flange sits closer to the centre (20 vs 35 mm): a smaller
-	// bracing angle moves the rim further laterally per turn.
-	if !(right > -left) {
-		t.Errorf("right lateral gain %v must exceed left %v", right, -left)
+	// Force model: the left flange sits further out (35 vs 20 mm), so its
+	// spokes pull at a wider bracing angle and a larger share of each turn's
+	// tension (ΔT·sin α) acts laterally.
+	if !(-left > right) {
+		t.Errorf("left lateral gain %v must exceed right %v", -left, right)
 	}
 	for i := 1; i < 16; i++ {
 		if !(math.Abs(inf.Lateral.At(i, 0)) < math.Abs(inf.Lateral.At(i-1, 0))) {

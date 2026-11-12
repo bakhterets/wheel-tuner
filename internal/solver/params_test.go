@@ -14,7 +14,7 @@ func TestParamsValidate(t *testing.T) {
 		{"defaults", func(*Params) {}, true},
 		{"no regularisation", func(p *Params) { p.Weights.Turns = 0 }, true},
 		{"zero pitch", func(p *Params) { p.ThreadPitchMM = 0 }, false},
-		{"NaN tension per turn", func(p *Params) { p.TensionPerTurnKgf = math.NaN() }, false},
+		{"NaN spoke rigidity", func(p *Params) { p.SpokeRigidityKgf = math.NaN() }, false},
 		{"infinite decay", func(p *Params) { p.LateralDecayMM = math.Inf(1) }, false},
 		{"negative radial compliance", func(p *Params) { p.RadialCompliance = -1 }, false},
 		{"zero turn step", func(p *Params) { p.TurnStep = 0 }, false},

@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -175,7 +176,7 @@ func TestWheelCRUD(t *testing.T) {
 
 	rec = do(t, h, http.MethodGet, "/api/wheels/1", nil)
 	expectStatus(t, rec, http.StatusOK)
-	if got := decodeBody[model.WheelSetup](t, rec); got != created {
+	if got := decodeBody[model.WheelSetup](t, rec); !reflect.DeepEqual(got, created) {
 		t.Errorf("get = %+v, want %+v", got, created)
 	}
 
@@ -408,6 +409,17 @@ func (f *fakeRepo) ListSessions(context.Context, int64) ([]model.Session, error)
 func (f *fakeRepo) DeleteSession(context.Context, int64) error { return f.err }
 func (f *fakeRepo) Ping(context.Context) error                 { return f.err }
 
+func (f *fakeRepo) ListRims(context.Context) ([]model.RimComponent, error) { return nil, f.err }
+func (f *fakeRepo) ListHubs(context.Context) ([]model.HubComponent, error) { return nil, f.err }
+
+func (f *fakeRepo) GetRim(context.Context, int64) (model.RimComponent, error) {
+	return model.RimComponent{}, f.err
+}
+
+func (f *fakeRepo) GetHub(context.Context, int64) (model.HubComponent, error) {
+	return model.HubComponent{}, f.err
+}
+
 func TestRepositoryFailures(t *testing.T) {
 	boom := errors.New("boom")
 	wheel := validWheel()
@@ -432,6 +444,12 @@ func TestRepositoryFailures(t *testing.T) {
 		{"get session", &fakeRepo{err: boom}, http.MethodGet, "/api/sessions/1", nil},
 		{"delete session", &fakeRepo{err: boom}, http.MethodDelete, "/api/sessions/1", nil},
 		{"solve session: wheel lookup", &fakeRepo{wheelErr: boom}, http.MethodPost, "/api/sessions/1/solve", nil},
+		{"list rims", &fakeRepo{err: boom}, http.MethodGet, "/api/components/rims", nil},
+		{"get rim", &fakeRepo{err: boom}, http.MethodGet, "/api/components/rims/1", nil},
+		{"list hubs", &fakeRepo{err: boom}, http.MethodGet, "/api/components/hubs", nil},
+		{"get hub", &fakeRepo{err: boom}, http.MethodGet, "/api/components/hubs/1", nil},
+		{"create wheel: rim lookup", &fakeRepo{err: boom}, http.MethodPost, "/api/wheels", withComponents(1, 0)},
+		{"update wheel: hub lookup", &fakeRepo{err: boom}, http.MethodPut, "/api/wheels/1", withComponents(0, 1)},
 		{"panic", &fakeRepo{panicV: "kaboom"}, http.MethodGet, "/api/wheels", nil},
 	}
 	for _, tt := range tests {

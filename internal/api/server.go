@@ -24,6 +24,10 @@ type Repository interface {
 	GetSession(ctx context.Context, id int64) (model.Session, error)
 	ListSessions(ctx context.Context, wheelID int64) ([]model.Session, error)
 	DeleteSession(ctx context.Context, id int64) error
+	ListRims(ctx context.Context) ([]model.RimComponent, error)
+	GetRim(ctx context.Context, id int64) (model.RimComponent, error)
+	ListHubs(ctx context.Context) ([]model.HubComponent, error)
+	GetHub(ctx context.Context, id int64) (model.HubComponent, error)
 	Ping(ctx context.Context) error
 }
 
@@ -67,6 +71,12 @@ func New(repo Repository, opts ...Option) *Server {
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.deleteSession)
 	mux.HandleFunc("POST /api/sessions/{id}/solve", s.solveSession)
 	mux.HandleFunc("POST /api/solve", s.solve)
+	mux.HandleFunc("POST /api/geometry", s.geometry)
+	mux.HandleFunc("GET /api/components/rims", s.listRims)
+	mux.HandleFunc("GET /api/components/rims/{id}", s.getRim)
+	mux.HandleFunc("GET /api/components/hubs", s.listHubs)
+	mux.HandleFunc("GET /api/components/hubs/{id}", s.getHub)
+	mux.HandleFunc("GET /api/tensiometers", s.listTensiometers)
 	if s.static != nil {
 		mux.Handle("GET /", http.FileServerFS(s.static))
 	}

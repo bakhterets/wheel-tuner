@@ -72,10 +72,11 @@ function isHeader(cells) {
 /**
  * Applies a pasted matrix onto rows starting at (startRow, startCol).
  * Cells that cannot be parsed are left unchanged and reported in errors.
- * A header line (all non-data words) is skipped.
+ * A header line (all non-data words) is skipped. columns lets the caller
+ * remap keys, e.g. the tension column to tension_reading.
  * @returns {{rows: object[], errors: {row: number, column: string, value: string}[]}}
  */
-export function applyPaste(rows, startRow, startCol, matrix) {
+export function applyPaste(rows, startRow, startCol, matrix, columns = COLUMNS) {
   const out = rows.map((r) => ({ ...r }));
   const errors = [];
   const data = matrix.length > 0 && isHeader(matrix[0]) ? matrix.slice(1) : matrix;
@@ -85,7 +86,7 @@ export function applyPaste(rows, startRow, startCol, matrix) {
       return;
     }
     cells.forEach((raw, dc) => {
-      const col = COLUMNS[startCol + dc];
+      const col = columns[startCol + dc];
       if (!col || col.type === 'readonly') {
         return;
       }

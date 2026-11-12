@@ -49,7 +49,8 @@ type geometry struct {
 	sides    []Side
 	latGain  []float64
 	radGain  []float64
-	partners [][]int // 0-based
+	turnKgf  []float64 // tension gained by each spoke per full turn
+	partners [][]int   // 0-based
 	p        Params
 }
 
@@ -61,15 +62,18 @@ func newGeometry(w Wheel, ms []Measurement, p Params) geometry {
 		sides:   make([]Side, n),
 		latGain: make([]float64, n),
 		radGain: make([]float64, n),
+		turnKgf: make([]float64, n),
 		p:       p,
 	}
+	sg := w.spokeGeometry(p)
 	for j, m := range ms {
-		beta := w.bracingAngle(m.Side)
+		s := sg.Side(m.Side)
 		g.sides[j] = m.Side
-		// With the rim held radially by the opposite spokes, shortening a
-		// spoke by δ moves the rim laterally by δ/sin β.
-		g.latGain[j] = m.Side.pull() * p.ThreadPitchMM * p.LateralCompliance / math.Sin(beta)
-		g.radGain[j] = -p.ThreadPitchMM * p.RadialCompliance * math.Cos(beta)
+		g.turnKgf[j] = s.TensionPerTurnKgf
+		// One turn adds ΔT = TensionPerTurnKgf; its lateral (ΔT·sin α) and
+		// radial components deflect the rim through its compliance.
+		g.latGain[j] = m.Side.pull() * s.TensionPerTurnKgf * s.lateral * p.LateralCompliance
+		g.radGain[j] = -s.TensionPerTurnKgf * s.radial * p.RadialCompliance
 	}
 	g.partners = crossPartners(g.sides, w.Cross, w.rotationSense())
 	return g
@@ -142,16 +146,17 @@ func (g geometry) deviationMatrix(gain []float64, lengthMM float64, flags []bool
 	return m, pts
 }
 
-// tensionMatrix models how one turn changes every spoke's tension:
-//   - the turned spoke gains TensionPerTurnKgf;
+// tensionMatrix models how one turn of spoke j changes every spoke's tension
+// (t_j = TensionPerTurnKgf of spoke j):
+//   - the turned spoke gains t_j;
 //   - the rim pulled towards its flange relaxes same-side neighbours and loads
-//     opposite-side neighbours (NeighborCoupling, attenuated along the rim);
-//   - each crossing spoke on the same flange gains CrossTalk.
+//     opposite-side neighbours (t_j·NeighborCoupling, attenuated along the rim);
+//   - each crossing spoke on the same flange gains t_j·CrossTalk.
 func (g geometry) tensionMatrix() *Matrix {
-	t0 := g.p.TensionPerTurnKgf
 	m := NewMatrix(g.n, g.n)
 	for i := range g.n {
 		for j := range g.n {
+			t0 := g.turnKgf[j]
 			if i == j {
 				m.Set(i, j, t0)
 				continue
@@ -163,7 +168,7 @@ func (g geometry) tensionMatrix() *Matrix {
 			m.Set(i, j, c)
 		}
 		for _, j := range g.partners[i] {
-			m.Set(i, j, m.At(i, j)+t0*g.p.CrossTalk)
+			m.Set(i, j, m.At(i, j)+g.turnKgf[j]*g.p.CrossTalk)
 		}
 	}
 	return m

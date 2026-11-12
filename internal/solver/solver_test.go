@@ -162,11 +162,35 @@ func TestSolveIsolatedHopTightensHighSpot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !(res.After.MaxRadialMM < res.Before.MaxRadialMM*0.85) {
+	if !(res.After.MaxRadialMM < res.Before.MaxRadialMM*0.7) {
 		t.Fatalf("hop %.2f → %.2f mm", res.Before.MaxRadialMM, res.After.MaxRadialMM)
 	}
 	if !(res.Turns[19] > 0) || res.After.MaxLateralMM > 0.2 {
 		t.Fatalf("expected tightening at spoke 20 without wobble: turns %v, lateral %.2f", res.Turns[16:24], res.After.MaxLateralMM)
+	}
+}
+
+// Guards the stage-02 force-model calibration: with the stage-01 kinematic
+// model the hop in this mix improved by only ≈10 %.
+func TestSolveMixedWobbleAndHop(t *testing.T) {
+	w := Wheel{SpokeCount: 32, ERDMM: 600, Cross: 3, FlangeLeftMM: 35, FlangeRightMM: 20, Direction: CounterClockwise, ViewFrom: Left}
+	ms := alternating(32, 100)
+	for i := range ms {
+		if ms[i].Side == Left {
+			ms[i].TensionKgf = 115
+		}
+		d := float64(i+1) - 9.5
+		ms[i].LateralMM = math.Round(80*math.Exp(-d*d/4.5)) / 100
+	}
+	ms[4].TensionKgf = 140
+	ms[13].RadialMM = 0.4
+	res, err := Solve(w, ms, DefaultParams())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !(res.After.MaxLateralMM < res.Before.MaxLateralMM/2) || !(res.After.MaxRadialMM < res.Before.MaxRadialMM*0.75) {
+		t.Fatalf("wobble %.2f → %.2f mm, hop %.2f → %.2f mm", res.Before.MaxLateralMM, res.After.MaxLateralMM,
+			res.Before.MaxRadialMM, res.After.MaxRadialMM)
 	}
 }
 
