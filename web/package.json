@@ -1,0 +1,9 @@
+{
+  "name": "wheel-tuner-web",
+  "private": true,
+  "type": "module",
+  "description": "Frontend unit tests run with the built-in Node test runner (no dependencies).",
+  "scripts": {
+    "test": "node --test --experimental-test-coverage test/"
+  }
+}
