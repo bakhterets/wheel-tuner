@@ -13,3 +13,7 @@
 
 # Node
 node_modules/
+
+# VS Code workspace configuration
+.vscode/
+.vscode/*.json
