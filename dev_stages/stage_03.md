@@ -109,10 +109,14 @@ JS tests: `bulk_persist.test.mjs` (new); `render.test.mjs`, `library.test.mjs`, 
 | `web/Dockerfile` | web image; `ENV BACKEND_URL=http://api:8080` |
 | `web/nginx/default.conf.template` | listen 8080; security headers on `/`; `/api/` and `= /healthz` → `${BACKEND_URL}`; `= /livez` → 200. `BACKEND_URL` must have **no trailing slash** (URI passed through unchanged). envsubst only replaces defined variables, so `$host` etc. survive |
 | `docker-compose.yml` | `api` (volume `wheel-data`) + `web` (port 8080); images `quay.io/${QUAY_NAMESPACE:-bakhterets}/wheel-tuner-{api,web}:${TAG:-latest}` |
+| `deploy/podman/wheel-tuner.yaml` | Podman (`podman kube play`): one pod; the containers share `localhost`, so the API is overridden to `127.0.0.1:8081` and `BACKEND_URL=http://127.0.0.1:8081`; PVC → named volume `wheel-tuner-data`; images `localhost/wheel-tuner-{api,web}:latest` |
+| `scripts/podman.sh` | Linux only: `up [--pull]` (build or pull+retag, `kube play --replace`, wait for `/healthz`), `down [--volumes]`, `logs`, `status`; `PORT` override via `kube play --publish` |
+| `scripts/smoke.sh` | curl probes through the proxy, shared by the `smoke` and `podman` CI jobs |
+| `.gitattributes` | LF for `*.sh`, Dockerfiles, YAML, nginx template (Windows checkouts) |
 | `.dockerignore`, `web/.dockerignore` | keep contexts small (no tests, DBs, `.git`) |
-| `.github/workflows/ci.yml` | `go`, `web`, then `smoke` (compose up + curl probes through the proxy), then `build-images` (build only, branches/PRs; aggregated into the single required check `images`, because matrix jobs report as `build image (…)`) or `publish` (push on `main`, environment `quay`) |
+| `.github/workflows/ci.yml` | `go`, `web`, then `smoke` (compose up + `scripts/smoke.sh`) and `podman` (rootless Podman: pod manifest via `scripts/podman.sh`, restart on another port with the kept volume), then `build-images` (build only, branches/PRs; aggregated into the single required check `images`, because matrix jobs report as `build image (…)`) or `publish` (push on `main`, environment `quay`) |
 | `.github/workflows/automerge.yml` | label `automerge` on a PR into `main` → `gh pr merge --auto --squash`; removing it → `--disable-auto`. Uses the repo secret `AUTOMERGE_TOKEN` (a fine-grained PAT): merges made with `GITHUB_TOKEN` do not trigger `publish` |
-| `Makefile` | `run-api`, `images`, `compose-up`, `compose-down` |
+| `Makefile` | `run-api`, `images`, `compose-up`, `compose-down`, `podman-up`, `podman-down` |
 
 **Repository setup needed once:**
 

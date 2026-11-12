@@ -42,13 +42,45 @@ docker compose down
 - The API runs as uid 65532; mount a writable volume at `/data`. SQLite allows **one** API replica per volume.
 - Without containers: `make run-api` (API on `:8081`, no UI) or the default single binary with the embedded UI.
 
+### Podman (Linux)
+
+Podman runs the same images as one **pod** from [deploy/podman/wheel-tuner.yaml](deploy/podman/wheel-tuner.yaml) (`podman kube play`), so no compose provider is needed. Both containers share the pod's `localhost`: the API listens on `127.0.0.1:8081` and is reachable only through the web proxy on port 8080. SQLite lives in the named volume `wheel-tuner-data` and survives `down`/`up`.
+
+Requirements: Podman ≥ 4.9 (rootless is fine; the default subuid range covers the API's uid 65532) and `curl`.
+
+| Task | Command |
+|------|---------|
+| Build images, start the pod, wait for `/healthz` | `scripts/podman.sh up` (or `make podman-up`) |
+| Use the published quay.io images instead of building | `scripts/podman.sh up --pull` |
+| Another host port | `PORT=9090 scripts/podman.sh up` |
+| Logs of both containers | `scripts/podman.sh logs -f` |
+| Pod and container state | `scripts/podman.sh status` |
+| Stop (data kept) | `scripts/podman.sh down` (or `make podman-down`) |
+| Stop and delete the data | `scripts/podman.sh down --volumes` |
+| Probe a running stack | `scripts/smoke.sh [base-url]` |
+
+- `--pull` takes `quay.io/${QUAY_NAMESPACE:-bakhterets}/wheel-tuner-{api,web}:${TAG:-latest}` and re-tags the images as `localhost/…:latest`, which the manifest uses.
+- Without the script:
+
+  ```sh
+  podman build -t localhost/wheel-tuner-api:latest .
+  podman build -t localhost/wheel-tuner-web:latest web
+  podman kube play --replace deploy/podman/wheel-tuner.yaml
+  podman kube down deploy/podman/wheel-tuner.yaml
+  ```
+
+- All base images are fully qualified (`docker.io/…`, `gcr.io/…`), so builds never stop at Podman's short-name prompt.
+- `podman compose up -d --build` with [docker-compose.yml](docker-compose.yml) also works if a compose provider (`podman-compose` or `docker-compose`) is installed. The pod manifest needs nothing extra and is what CI checks.
+- Run as a user service that survives reboots: a Quadlet unit `~/.config/containers/systemd/wheel-tuner.kube` with `[Kube]` and `Yaml=/abs/path/deploy/podman/wheel-tuner.yaml`, then `systemctl --user daemon-reload && systemctl --user start wheel-tuner` (plus `loginctl enable-linger $USER` to start without a login).
+
 ## CI/CD and quay.io
 
 [.github/workflows/ci.yml](.github/workflows/ci.yml) runs on every push and pull request:
 
 1. `go` — gofmt, vet, golangci-lint, `go test -race` with coverage.
 2. `web` — JS tests with coverage.
-3. `smoke` — `docker compose up --build`, then checks `/livez`, `/healthz`, `/`, `/api/tensiometers` and `/api/components/hubs` through the web proxy.
+3. `smoke` — `docker compose up --build`, then [scripts/smoke.sh](scripts/smoke.sh) checks `/livez`, `/healthz`, `/`, `/api/tensiometers` and `/api/components/hubs` through the web proxy.
+   `podman` — the same stack under rootless Podman from the pod manifest via `scripts/podman.sh`, including a restart on another port with the kept volume.
 4. `build-images` (branches and pull requests) — builds both images (matrix `api`, `web`) without pushing. It has no access to registry credentials. The `images` job aggregates the matrix into one stable check name for the ruleset (matrix jobs report as `build image (…)`).
 5. `publish` (push to `main` only, i.e. after a merge) — builds and pushes `quay.io/<namespace>/wheel-tuner-{api,web}` with tags `sha-<short>` and `latest`. It runs in the protected `quay` environment.
 
@@ -76,7 +108,7 @@ GitHub never passes secrets to workflows triggered by pull requests from forks, 
 Setup:
 
 1. Settings → General → Pull Requests: enable **Allow auto-merge**.
-2. `main` needs required status checks (`go`, `web`, `smoke`, `images`), otherwise there is nothing to wait for.
+2. `main` needs required status checks (`go`, `web`, `smoke`, `podman`, `images`), otherwise there is nothing to wait for.
 3. Issues → Labels → **New label** `automerge`.
 4. Create a fine-grained PAT (Settings → Developer settings → Fine-grained tokens):
    - *Only select repositories* → `wheel-tuner`;

@@ -1,4 +1,4 @@
-.PHONY: all build run run-api test test-go test-web cover lint fmt images compose-up compose-down
+.PHONY: all build run run-api test test-go test-web cover lint fmt images compose-up compose-down podman-up podman-down
 
 all: lint test build
 
@@ -36,3 +36,9 @@ compose-up:
 
 compose-down:
 	docker compose down
+
+podman-up:
+	sh scripts/podman.sh up
+
+podman-down:
+	sh scripts/podman.sh down

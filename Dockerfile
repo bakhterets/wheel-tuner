@@ -2,7 +2,7 @@
 # Backend microservice: JSON API + solver, SQLite on the /data volume.
 # The embedded web UI is off by default (the frontend has its own image);
 # run with "-web=true" for a single-container deployment.
-FROM golang:1.25-bookworm AS build
+FROM docker.io/library/golang:1.25-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

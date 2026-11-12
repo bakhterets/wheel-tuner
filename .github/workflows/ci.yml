@@ -52,19 +52,41 @@ jobs:
       - name: start the stack
         run: docker compose up -d --build
       - name: probe frontend, proxy and backend
-        run: |
-          for i in $(seq 1 30); do curl -fsS http://localhost:8080/healthz && break; sleep 2; done
-          curl -fsS http://localhost:8080/livez
-          curl -fsS http://localhost:8080/healthz
-          curl -fsS http://localhost:8080/ | grep -q 'Wheel Tuner'
-          curl -fsS http://localhost:8080/api/tensiometers | grep -q 'ztto-tc-02'
-          curl -fsS http://localhost:8080/api/components/hubs | grep -q 'Fade SP'
+        run: sh scripts/smoke.sh http://localhost:8080
       - name: logs
         if: failure()
         run: docker compose logs
       - name: stop
         if: always()
         run: docker compose down -v
+
+  # The same stack under rootless Podman: the pod manifest via the helper
+  # script developers use locally.
+  podman:
+    needs: [go, web]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: podman version
+      - name: up, probe, down (data kept)
+        run: |
+          sh scripts/podman.sh up
+          sh scripts/podman.sh status
+          sh scripts/smoke.sh http://localhost:8080
+          sh scripts/podman.sh down
+          podman volume exists wheel-tuner-data
+      - name: restart on another port with the kept volume, then remove it
+        run: |
+          PORT=8090 sh scripts/podman.sh up
+          sh scripts/smoke.sh http://localhost:8090
+          sh scripts/podman.sh down --volumes
+          if podman volume exists wheel-tuner-data; then echo "volume not removed" >&2; exit 1; fi
+      - name: logs
+        if: failure()
+        run: podman pod logs wheel-tuner || true
+      - name: cleanup
+        if: always()
+        run: sh scripts/podman.sh down --volumes
 
   # Branches and pull requests: build the images only. This job never sees
   # registry credentials.
