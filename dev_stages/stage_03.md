@@ -111,6 +111,7 @@ JS tests: `bulk_persist.test.mjs` (new); `render.test.mjs`, `library.test.mjs`, 
 | `docker-compose.yml` | `api` (volume `wheel-data`) + `web` (port 8080); images `quay.io/${QUAY_NAMESPACE:-bakhterets}/wheel-tuner-{api,web}:${TAG:-latest}` |
 | `.dockerignore`, `web/.dockerignore` | keep contexts small (no tests, DBs, `.git`) |
 | `.github/workflows/ci.yml` | `go`, `web`, then `smoke` (compose up + curl probes through the proxy), then `images` (build only, branches/PRs) or `publish` (push on `main`, environment `quay`) |
+| `.github/workflows/automerge.yml` | label `automerge` on a PR into `main` → `gh pr merge --auto --squash`; removing it → `--disable-auto`. Uses the repo secret `AUTOMERGE_TOKEN` (a fine-grained PAT): merges made with `GITHUB_TOKEN` do not trigger `publish` |
 | `Makefile` | `run-api`, `images`, `compose-up`, `compose-down` |
 
 **Repository setup needed once:**

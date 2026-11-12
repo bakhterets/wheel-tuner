@@ -69,6 +69,23 @@ Repository setup. The repo is public, so the credentials are **environment secre
 
 GitHub never passes secrets to workflows triggered by pull requests from forks, and masks them in logs. The workflow does not use `pull_request_target`; keep it that way.
 
+### Auto-merge by label
+
+[.github/workflows/automerge.yml](.github/workflows/automerge.yml): adding the label **`automerge`** to a PR into `main` enables GitHub auto-merge (squash). The PR then merges by itself once the required checks pass. Removing the label disables auto-merge. Fork PRs and PRs into other branches are ignored.
+
+Setup:
+
+1. Settings → General → Pull Requests: enable **Allow auto-merge**.
+2. `main` needs required status checks (`go`, `web`, `smoke`, `images`), otherwise there is nothing to wait for.
+3. Issues → Labels → **New label** `automerge`.
+4. Create a fine-grained PAT (Settings → Developer settings → Fine-grained tokens):
+   - *Only select repositories* → `wheel-tuner`;
+   - permissions *Contents: Read and write* and *Pull requests: Read and write*;
+   - an expiry date.
+5. Store the PAT as the repository secret `AUTOMERGE_TOKEN`.
+
+A merge made with `GITHUB_TOKEN` would not trigger the push workflow on `main`, so `publish` would never run. That is why the workflow needs a PAT (or a GitHub App token).
+
 ## Development
 
 ```sh
