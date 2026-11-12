@@ -35,6 +35,19 @@ func TestSpokeGeometryLength(t *testing.T) {
 				FlangeDiamLeftMM: 38.5, FlangeDiamRightMM: 38.5, SpokeType: StraightPull,
 				Direction: Clockwise, ViewFrom: Left}
 		}, Left, specLength(38.5, 29, 602, 2, 28)},
+		{"paired straight-pull: Fade SP 28h on F 572 29, 3x (user build, 303 mm)", func(w *Wheel) {
+			*w = Wheel{SpokeCount: 28, ERDMM: 602, Cross: 3, FlangeLeftMM: 29, FlangeRightMM: 34,
+				FlangeDiamLeftMM: 38.5, FlangeDiamRightMM: 38.5, SpokeType: StraightPull, PairedSpokes: true,
+				Direction: Clockwise, ViewFrom: Left}
+		}, Left, math.Sqrt(19.25*19.25 + 29*29 + 301*301)}, // θ = 3·720/28 + 360/28 = 90°: 303.006
+		{"paired straight-pull right side", func(w *Wheel) {
+			*w = Wheel{SpokeCount: 28, ERDMM: 602, Cross: 3, FlangeLeftMM: 29, FlangeRightMM: 34,
+				FlangeDiamLeftMM: 38.5, FlangeDiamRightMM: 38.5, SpokeType: StraightPull, PairedSpokes: true,
+				Direction: Clockwise, ViewFrom: Left}
+		}, Right, math.Sqrt(19.25*19.25 + 34*34 + 301*301)}, // 303.525
+		{"paired radial lacing has no extra span", func(w *Wheel) {
+			w.Cross, w.FlangeDiamRightMM, w.SpokeType, w.PairedSpokes = 0, 46, StraightPull, true
+		}, Right, math.Hypot(300-23, 20)},
 		{"rim offset shortens the left spoke", func(w *Wheel) {
 			w.FlangeDiamLeftMM, w.RimOffsetMM, w.SpokeType = 58, 3, StraightPull
 		}, Left, specLength(58, 32, 600, 3, 32)},

@@ -37,7 +37,7 @@ The user did not review these; they were made autonomously (autopilot). Revisit 
 
 ## 3. Data notes for the user's build
 
-- **The Newmen Fade SP front Boost hub is 28H only.** F 572 28H fits. **F 572 32H needs a different hub** (e.g. Newmen Fade J-bend front 28/32H, or a DT 240/350 SP front). The UI shows the note *"Hub … has no 32H version (28H)."*
+- **The Newmen Fade SP front Boost hub is 28H only.** *(Corrected in [stage_03.md](stage_03.md): a 32H version exists and is now in the library.)* F 572 28H fits. **F 572 32H needs a different hub** (e.g. Newmen Fade J-bend front 28/32H, or a DT 240/350 SP front). The UI shows the note *"Hub … has no 32H version (28H)."*
 - Colour (silver/black) does not change geometry, so there is one hub row.
 - DT Swiss 1200 N rim limit ≈ **122 kgf** (retailer data, r2-bike.com). It is set for F 572, EX 511, XM 481 and XR 391; FR 541 and XM 421 have 0 (unknown).
 - Reference result, F 572 29″ + Fade SP front, 28H 2x: spoke length L 290.8 / R 291.4 mm, bracing 5.72° / 6.70°, ΔT 24.8 / 24.7 kgf per turn, expected tension ratio L/R **1.17**.

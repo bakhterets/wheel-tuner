@@ -155,8 +155,16 @@ type Wheel struct {
 	// bracing angle and widens the right one.
 	RimOffsetMM float64
 	SpokeType   SpokeType
-	Direction   Direction
-	ViewFrom    Side // side of the wheel the mechanic is looking from
+	// PairedSpokes marks a straight-pull flange whose spokes leave in
+	// leading/trailing pairs from one seat block. The pair sits midway between
+	// the equivalent J-bend holes, so a crossed spoke spans 360°/N more.
+	PairedSpokes bool
+	// Upper tension limits per side (kgf); 0 disables the limit. The
+	// optimiser keeps measured spokes at or below them.
+	TensionLimitLeftKgf  float64
+	TensionLimitRightKgf float64
+	Direction            Direction
+	ViewFrom             Side // side of the wheel the mechanic is looking from
 }
 
 // Validate checks that the wheel describes a buildable geometry.
@@ -195,6 +203,14 @@ func (w Wheel) Validate() error {
 	if w.SpokeType != JBend && w.SpokeType != StraightPull {
 		return invalidf("invalid spoke type %d", int(w.SpokeType))
 	}
+	if w.PairedSpokes && w.SpokeType != StraightPull {
+		return invalidf("paired spokes require a straight-pull hub")
+	}
+	for _, side := range [...]Side{Left, Right} {
+		if l := w.tensionLimit(side); !(l >= 0) || math.IsInf(l, 0) {
+			return invalidf("%s tension limit must be a finite non-negative number", strings.ToLower(side.name()))
+		}
+	}
 	if w.Direction != Clockwise && w.Direction != CounterClockwise {
 		return invalidf("invalid counting direction %d", int(w.Direction))
 	}
@@ -206,6 +222,22 @@ func (w Wheel) Validate() error {
 
 func (w Wheel) hubOffsetDeg() float64 {
 	return float64(w.Cross) * 720 / float64(w.SpokeCount)
+}
+
+// spanDeg is the hub-to-rim angle of a spoke, seen along the axle: the
+// J-bend hub offset, plus half a hole spacing for paired straight-pull seats.
+func (w Wheel) spanDeg() float64 {
+	if w.PairedSpokes && w.Cross > 0 {
+		return w.hubOffsetDeg() + 360/float64(w.SpokeCount)
+	}
+	return w.hubOffsetDeg()
+}
+
+func (w Wheel) tensionLimit(s Side) float64 {
+	if s == Right {
+		return w.TensionLimitRightKgf
+	}
+	return w.TensionLimitLeftKgf
 }
 
 // rotationSense is +1 when increasing spoke index runs clockwise as seen from

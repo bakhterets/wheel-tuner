@@ -64,24 +64,32 @@ func hubSeeds() []model.HubComponent {
 			FlangeDiamLeftMM: pcdL, FlangeDiamRightMM: pcdR, FlangeDistLeftMM: fL, FlangeDistRightMM: fR, Source: src,
 		}
 	}
+	// Newmen straight-pull flanges seat the spokes in leading/trailing pairs.
 	newmen := func(name, pos, axle, spoke string, holes []int, pcdL, pcdR, fL, fR float64) model.HubComponent {
-		return hub("Newmen", name, pos, axle, spoke, holes, pcdL, pcdR, fL, fR, srcNewmenHubs)
+		h := hub("Newmen", name, pos, axle, spoke, holes, pcdL, pcdR, fL, fR, srcNewmenHubs)
+		h.PairedSpokes = spoke == sp
+		return h
 	}
 	dt := func(name, pos, axle, spoke string, pcdL, pcdR, fL, fR float64) model.HubComponent {
 		return hub("DT Swiss", name, pos, axle, spoke, nil, pcdL, pcdR, fL, fR, srcDTSwissCalc)
 	}
 	return []model.HubComponent{
-		// The straight-pull Fade front hub is sold in 28h only; the colour
-		// (silver, black, ...) does not change its geometry.
+		// Straight-pull Fade hubs have a different flange per drilling (28h
+		// and 32h rows below); the colour (silver, black, ...) does not
+		// change the geometry. Model names of existing rows are kept: seeds
+		// are upserted by (brand, model).
 		newmen("Fade SP Front 15x110 Boost 6-bolt/CL", "front", "15x110 Boost", sp, []int{28}, 38.5, 38.5, 29.0, 34.0),
+		newmen("Fade SP Front 15x110 Boost 6-bolt 32h", "front", "15x110 Boost", sp, []int{32}, 50.5, 50.5, 28.5, 37.1),
 		newmen("Fade Front 15/20x110 Boost 6-bolt", "front", "15x110 Boost", jb, []int{28, 32}, 54.8, 37.8, 27.5, 39.0),
 		newmen("Fade Front 15x110 Boost CL", "front", "15x110 Boost", jb, []int{28, 32}, 56.6, 56.6, 26.3, 36.0),
 		newmen("Fade UL Front 15x110 Boost", "front", "15x110 Boost", jb, nil, 53.9, 37.8, 27.1, 39.4),
 		newmen("Fade Rear 12x148 Boost", "rear", "12x148 Boost", jb, []int{28, 32}, 54.8, 54.8, 36.8, 23.3),
 		newmen("Fade SP Rear 12x148 Boost", "rear", "12x148 Boost", sp, []int{28}, 39.2, 55.3, 36.9, 23.1),
+		newmen("Fade SP Rear 12x148 Boost 6-bolt/CL 32h", "rear", "12x148 Boost", sp, []int{32}, 50.5, 56.4, 36.9, 23.1),
 		newmen("Fade UL Rear 12x148 Boost", "rear", "12x148 Boost", jb, nil, 53.8, 48.6, 36.7, 23.7),
 		newmen("Fade Rear 12x157", "rear", "12x157", jb, nil, 54.8, 54.8, 41.3, 27.8),
-		newmen("Fade SP Rear 12x157", "rear", "12x157", sp, nil, 39.2, 55.3, 41.4, 27.6),
+		newmen("Fade SP Rear 12x157", "rear", "12x157", sp, []int{28}, 39.2, 55.3, 41.4, 27.6),
+		newmen("Fade SP Rear 12x157 32h", "rear", "12x157", sp, []int{32}, 50.5, 56.4, 37.7, 27.6),
 
 		dt("350 Front 15x110 Boost 6-bolt", "front", "15x110 Boost", jb, 60, 44, 27.4, 40),
 		dt("350 Front 15x110 Boost CL", "front", "15x110 Boost", jb, 44, 44, 27.4, 40),
@@ -143,13 +151,14 @@ func seedComponents(ctx context.Context, db *sql.DB, rims []model.RimComponent, 
 	for _, h := range hubs {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO hub_components (brand, model, position, axle,
 			flange_dist_left_mm, flange_dist_right_mm, flange_diam_left_mm, flange_diam_right_mm,
-			spoke_type, hole_counts, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			spoke_type, paired_spokes, hole_counts, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (brand, model) DO UPDATE SET position = excluded.position, axle = excluded.axle,
 			flange_dist_left_mm = excluded.flange_dist_left_mm, flange_dist_right_mm = excluded.flange_dist_right_mm,
 			flange_diam_left_mm = excluded.flange_diam_left_mm, flange_diam_right_mm = excluded.flange_diam_right_mm,
-			spoke_type = excluded.spoke_type, hole_counts = excluded.hole_counts, source = excluded.source`,
+			spoke_type = excluded.spoke_type, paired_spokes = excluded.paired_spokes,
+			hole_counts = excluded.hole_counts, source = excluded.source`,
 			h.Brand, h.Model, h.Position, h.Axle, h.FlangeDistLeftMM, h.FlangeDistRightMM,
-			h.FlangeDiamLeftMM, h.FlangeDiamRightMM, h.SpokeType, joinInts(h.HoleCounts), h.Source); err != nil {
+			h.FlangeDiamLeftMM, h.FlangeDiamRightMM, h.SpokeType, h.PairedSpokes, joinInts(h.HoleCounts), h.Source); err != nil {
 			return fmt.Errorf("seed hub %s %s: %w", h.Brand, h.Model, err)
 		}
 	}

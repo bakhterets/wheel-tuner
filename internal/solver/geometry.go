@@ -48,14 +48,15 @@ func (w Wheel) spokeGeometry(p Params) Geometry {
 }
 
 // side computes the spoke vector from the flange hole to the rim. The hub
-// end of a crossed spoke is rotated by θ = cross·720°/N, giving the classic
-// length formula L = √(D² + F² + R² − 2·D·R·cos θ), D = flange radius,
-// R = ERD/2, F = effective flange distance.
+// end of a crossed spoke is rotated by θ = cross·720°/N (+360°/N for paired
+// straight-pull seats), giving the classic length formula
+// L = √(D² + F² + R² − 2·D·R·cos θ), D = flange radius, R = ERD/2,
+// F = effective flange distance.
 func (w Wheel) side(s Side, p Params) SideGeometry {
 	f := w.effectiveFlange(s)
 	d := w.flangeDiam(s) / 2
 	r := w.ERDMM / 2
-	theta := w.hubOffsetDeg() * math.Pi / 180
+	theta := w.spanDeg() * math.Pi / 180
 	l := math.Sqrt(d*d + f*f + r*r - 2*d*r*math.Cos(theta))
 	length := l
 	if w.SpokeType == JBend {

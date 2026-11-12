@@ -150,6 +150,12 @@ func TestWheelValidate(t *testing.T) {
 		{"rim offset swallows left flange", func(w *Wheel) { w.RimOffsetMM = 35 }, false},
 		{"rim offset swallows right flange", func(w *Wheel) { w.RimOffsetMM = -20 }, false},
 		{"bad spoke type", func(w *Wheel) { w.SpokeType = 9 }, false},
+		{"paired straight-pull", func(w *Wheel) { w.SpokeType, w.PairedSpokes = StraightPull, true }, true},
+		{"paired J-bend", func(w *Wheel) { w.PairedSpokes = true }, false},
+		{"tension limits", func(w *Wheel) { w.TensionLimitLeftKgf, w.TensionLimitRightKgf = 120, 90 }, true},
+		{"negative tension limit", func(w *Wheel) { w.TensionLimitLeftKgf = -1 }, false},
+		{"NaN tension limit", func(w *Wheel) { w.TensionLimitRightKgf = math.NaN() }, false},
+		{"infinite tension limit", func(w *Wheel) { w.TensionLimitRightKgf = math.Inf(1) }, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

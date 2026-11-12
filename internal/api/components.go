@@ -91,14 +91,15 @@ func (s *Server) geometry(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	if err := prepareWheel(&in); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	g, err := solver.SpokeGeometry(toSolverWheel(in), s.params)
+	g, err := prepareWheel(&in)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.writeJSON(w, r, http.StatusOK, toGeometryDTO(g))
+	geo, err := solver.SpokeGeometry(g, s.params)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, toGeometryDTO(geo))
 }

@@ -115,7 +115,7 @@ const rims = [
 ];
 const hubs = [
   {
-    id: 10, brand: 'Newmen', model: 'Fade SP Front 15x110 Boost 6-bolt/CL', spoke_type: 'Straightpull', hole_counts: [28],
+    id: 10, brand: 'Newmen', model: 'Fade SP Front 15x110 Boost 6-bolt/CL', spoke_type: 'Straightpull', hole_counts: [28], paired_spokes: true,
     flange_dist_left_mm: 29, flange_dist_right_mm: 34, flange_diam_left_mm: 38.5, flange_diam_right_mm: 38.5,
   },
   {
@@ -159,8 +159,9 @@ describe('component library', () => {
     assert.equal(comp.rimPatch(rims[2], { spokes_count: 32 }).spokes_count, 36);
     assert.deepEqual(comp.hubPatch(hubs[0], { spokes_count: 32 }), {
       hub_component_id: 10, flange_dist_left_mm: 29, flange_dist_right_mm: 34,
-      flange_diam_left_mm: 38.5, flange_diam_right_mm: 38.5, spoke_type: 'Straightpull', spokes_count: 28,
+      flange_diam_left_mm: 38.5, flange_diam_right_mm: 38.5, spoke_type: 'Straightpull', paired_spokes: true, spokes_count: 28,
     });
+    assert.equal(comp.hubPatch(hubs[1], { spokes_count: 32 }).paired_spokes, false);
     assert.ok(!('spokes_count' in comp.hubPatch(hubs[1], { spokes_count: 32 })), 'unknown drilling keeps the count');
   });
 
@@ -198,13 +199,14 @@ describe('component library', () => {
 
 describe('grid with a tensiometer', () => {
   const conv = () => tm.createConverter(catalog, wheel);
-  function setup(rows) {
+  function setup(rows, side) {
     const table = container();
     const tbody = container();
     table.append(tbody);
-    renderGrid(tbody, rows, conv());
+    renderGrid(tbody, rows, side, conv());
     const state = { rows, updates: [] };
     bindGrid(table, {
+      side,
       getRows: () => state.rows,
       getConverter: conv,
       onRows: (next, rerender) => {
@@ -219,22 +221,22 @@ describe('grid with a tensiometer', () => {
   const preview = (tbody, row) => tbody.children[row].querySelector('span.kgf').textContent;
 
   it('shows readings with a kgf preview and flags unconverted ones', () => {
-    const rows = defaultRows(3);
+    const rows = defaultRows(5);
     Object.assign(rows[0], { tension_reading: 2.8, tension_kgf: 102 });
-    Object.assign(rows[1], { tension_reading: 9, tension_kgf: null });
-    const { table, tbody } = setup(rows);
-    assert.equal(cell(tbody, 0, 2).value, '2.8');
-    assert.equal(cell(tbody, 0, 2).getAttribute('aria-label'), 'tension_reading spoke 1');
+    Object.assign(rows[2], { tension_reading: 9, tension_kgf: null });
+    const { table, tbody } = setup(rows, 'L');
+    assert.equal(cell(tbody, 0, 1).value, '2.8');
+    assert.equal(cell(tbody, 0, 1).getAttribute('aria-label'), 'tension_reading spoke L1');
     assert.equal(preview(tbody, 0), '≈ 102 kgf');
     assert.equal(preview(tbody, 1), 'outside 2.6–3');
-    assert.ok(cell(tbody, 1, 2).classList.contains('invalid'));
+    assert.ok(cell(tbody, 1, 1).classList.contains('invalid'));
     assert.equal(preview(tbody, 2), '');
     assert.ok(hasInvalidCells(table));
   });
 
-  it('converts typed readings and re-converts on side changes', () => {
-    const { table, tbody, state } = setup(defaultRows(2));
-    const input = cell(tbody, 0, 2);
+  it('converts typed readings with the gauge of the table side', () => {
+    const { table, tbody, state } = setup(defaultRows(4), 'L');
+    const input = cell(tbody, 0, 1);
     input.value = '2,9';
     input.dispatch('input');
     assert.equal(state.rows[0].tension_reading, 2.9);
@@ -242,12 +244,10 @@ describe('grid with a tensiometer', () => {
     assert.equal(preview(tbody, 0), '≈ 112 kgf');
     assert.deepEqual(state.updates, [false]);
 
-    const side = cell(tbody, 0, 1);
-    side.value = 'R';
-    side.dispatch('change');
-    assert.ok(Math.abs(state.rows[0].tension_kgf - 110) < 1e-9, 'the R gauge is the plain 1.8 table');
-    assert.equal(tbody.children[0].className, 'side-r');
-    assert.equal(preview(tbody, 0), '≈ 110 kgf');
+    const right = setup(defaultRows(4), 'R');
+    cell(right.tbody, 0, 1).value = '2.9';
+    cell(right.tbody, 0, 1).dispatch('input');
+    assert.ok(Math.abs(right.state.rows[1].tension_kgf - 110) < 1e-9, 'the R gauge is the plain 1.8 table');
 
     input.value = '3.5';
     input.dispatch('input');
@@ -265,23 +265,24 @@ describe('grid with a tensiometer', () => {
     assert.equal(state.rows[0].tension_reading, null);
     assert.equal(state.rows[0].tension_kgf, null);
 
-    const lateral = cell(tbody, 1, 3);
-    cell(tbody, 1, 2).value = '2.8';
-    cell(tbody, 1, 2).dispatch('input');
+    const lateral = cell(tbody, 1, 2);
+    cell(tbody, 1, 1).value = '2.8';
+    cell(tbody, 1, 1).dispatch('input');
     lateral.value = 'x';
     lateral.dispatch('input');
     assert.ok(lateral.classList.contains('invalid'));
-    assert.equal(preview(tbody, 1), '≈ 100 kgf', 'other columns leave the preview alone');
+    lateral.value = '0.1';
+    lateral.dispatch('input');
+    assert.equal(preview(tbody, 1), '≈ 102 kgf', 'other columns leave the preview alone');
   });
 
   it('pastes readings into the reading column', () => {
-    const { tbody, state } = setup(defaultRows(2));
-    cell(tbody, 0, 2).dispatch('paste', { clipboardData: { getData: () => '2.8\n2.8' } });
-    assert.deepEqual(state.rows.map((r) => [r.tension_reading, r.tension_kgf]), [[2.8, 102], [2.8, 100]]);
+    const { tbody, state } = setup(defaultRows(4), 'R');
+    cell(tbody, 0, 1).dispatch('paste', { clipboardData: { getData: () => '2.8\n2.8' } });
+    assert.deepEqual(state.rows.map((r) => [r.tension_reading, r.tension_kgf]), [[null, null], [2.8, 100], [null, null], [2.8, 100]]);
     assert.deepEqual(state.updates, [true]);
   });
 });
-
 describe('results tension warnings', () => {
   const base = {
     orientation: 'o', max_tension_kgf: 122,
@@ -305,6 +306,14 @@ describe('results tension warnings', () => {
     assert.equal(items[1].querySelector('span.warning'), null);
     assert.equal(c.querySelector('p.tension-alert').textContent,
       '⚠️ Approaching Max Rim Tension: 1 spoke(s) predicted at ≥ 95% of the 122 kgf rim limit.');
+  });
+
+  it('shows the enforced per-side tension caps', () => {
+    const c = container();
+    renderResults(c, { ...base, actions: [], tension_limit_left_kgf: 102.4, tension_limit_right_kgf: 0 });
+    assert.equal(c.querySelector('p.limits').textContent, 'Tension cap (desired limit / rim max): Left ≤ 102 kgf · Right no cap');
+    renderResults(c, { ...base, actions: [], tension_limit_left_kgf: 0, tension_limit_right_kgf: 0 });
+    assert.equal(c.querySelector('p.limits'), null);
   });
 
   it('omits the alert without warnings or predictions', () => {

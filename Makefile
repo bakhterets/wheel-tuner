@@ -1,4 +1,4 @@
-.PHONY: all build run test test-go test-web cover lint fmt
+.PHONY: all build run run-api test test-go test-web cover lint fmt images compose-up compose-down
 
 all: lint test build
 
@@ -26,3 +26,13 @@ lint:
 fmt:
 	gofmt -w .
 	golangci-lint fmt ./...
+
+images:
+	docker build -t wheel-tuner-api .
+	docker build -t wheel-tuner-web web
+
+compose-up:
+	docker compose up -d --build
+
+compose-down:
+	docker compose down

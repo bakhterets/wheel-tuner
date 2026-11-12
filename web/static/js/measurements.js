@@ -3,15 +3,19 @@
 
 export const SPOKE_COUNTS = Object.freeze([20, 24, 28, 32, 36]);
 
-/** Default side for a spoke: odd spokes on the left flange, even on the right. */
-export function defaultSide(index) {
-  return index % 2 === 1 ? 'L' : 'R';
+/**
+ * Side of a spoke on an alternately laced wheel: odd spokes sit on the flange
+ * of spoke #1 (the left / rotor flange by default), even ones on the other.
+ */
+export function defaultSide(index, first = 'L') {
+  const other = first === 'L' ? 'R' : 'L';
+  return index % 2 === 1 ? first : other;
 }
 
-export function emptyRow(index) {
+export function emptyRow(index, first = 'L') {
   return {
     spoke_index: index,
-    side: defaultSide(index),
+    side: defaultSide(index, first),
     tension_kgf: null,
     tension_reading: null,
     lateral_dev_mm: null,
@@ -25,9 +29,25 @@ export function defaultRows(n) {
   return Array.from({ length: n }, (_, i) => emptyRow(i + 1));
 }
 
-/** Returns n rows, keeping the data of existing rows with index <= n. */
+/** Returns n rows, keeping the data of existing rows with index <= n; new rows continue the alternation. */
 export function resizeRows(rows, n) {
-  return Array.from({ length: n }, (_, i) => (rows[i] ? { ...rows[i] } : emptyRow(i + 1)));
+  const first = firstSide(rows);
+  return Array.from({ length: n }, (_, i) => (rows[i] ? { ...rows[i] } : emptyRow(i + 1, first)));
+}
+
+/** Flange of spoke #1 ('L' for an empty grid). */
+export function firstSide(rows) {
+  return rows[0]?.side ?? 'L';
+}
+
+/** Re-assigns alternating sides with spoke #1 on first; measured values stay with their spoke number. */
+export function assignSides(rows, first) {
+  return rows.map((r) => ({ ...r, side: defaultSide(r.spoke_index, first) }));
+}
+
+/** Grid row indexes (positions in rows) of the spokes on one side, in spoke order. */
+export function sideIndexes(rows, side) {
+  return rows.flatMap((r, i) => (r.side === side ? [i] : []));
 }
 
 /** Builds grid rows from stored API measurements. */

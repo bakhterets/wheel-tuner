@@ -60,6 +60,9 @@ type solveResponse struct {
 	Iterations    int             `json:"iterations"`
 	Geometry      geometryDTO     `json:"geometry"`
 	MaxTensionKgf float64         `json:"max_tension_kgf"`
+	// Effective per-side caps enforced by the solver (0 = none).
+	TensionLimitLeftKgf  float64 `json:"tension_limit_left_kgf"`
+	TensionLimitRightKgf float64 `json:"tension_limit_right_kgf"`
 }
 
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
@@ -170,7 +173,7 @@ func (s *Server) solve(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	if err := prepareWheel(&in.Wheel); err != nil {
+	if _, err := prepareWheel(&in.Wheel); err != nil {
 		s.fail(w, r, err)
 		return
 	}
@@ -190,25 +193,26 @@ func (s *Server) solve(w http.ResponseWriter, r *http.Request) {
 // measurements to kgf in place. Stored sessions are not re-resolved: their
 // kgf values were fixed with the tensiometer settings at recording time.
 func resolveInput(wheel model.WheelSetup, ms []model.Measurement) error {
-	if err := checkInput(wheel, ms); err != nil {
+	if _, err := checkInput(wheel, ms); err != nil {
 		return err
 	}
 	return model.ResolveTensions(wheel, ms)
 }
 
-func checkInput(wheel model.WheelSetup, ms []model.Measurement) error {
-	// Stored profiles are re-validated: toSolverWheel relies on it.
-	if err := wheel.Validate(); err != nil {
-		return err
+// checkInput re-validates the (possibly stored) profile and the measurements.
+func checkInput(wheel model.WheelSetup, ms []model.Measurement) (solver.Wheel, error) {
+	sw, err := toSolverWheel(wheel)
+	if err != nil {
+		return sw, err
 	}
-	return model.ValidateMeasurements(wheel.SpokesCount, ms)
+	return sw, model.ValidateMeasurements(wheel.SpokesCount, ms)
 }
 
 func validateInput(wheel model.WheelSetup, ms []model.Measurement) (solver.Wheel, []solver.Measurement, error) {
-	if err := checkInput(wheel, ms); err != nil {
+	sw, err := checkInput(wheel, ms)
+	if err != nil {
 		return solver.Wheel{}, nil, err
 	}
-	sw := toSolverWheel(wheel)
 	sms := make([]solver.Measurement, len(ms))
 	for i, m := range ms {
 		sms[i] = solver.Measurement{
@@ -242,16 +246,18 @@ func (s *Server) run(wheel model.WheelSetup, ms []model.Measurement) (solveRespo
 		return wheel.MaxTensionKgf > 0 && kgf >= tensionWarningRatio*wheel.MaxTensionKgf
 	}
 	resp := solveResponse{
-		Orientation:   wheel.OrientationHeader(),
-		Actions:       make([]actionDTO, len(res.Actions)),
-		Turns:         res.Turns,
-		RawTurns:      res.RawTurns,
-		Before:        toMetricsDTO(res.Before),
-		After:         toMetricsDTO(res.After),
-		Predicted:     make([]spokeStateDTO, len(res.Predicted)),
-		Iterations:    res.Iterations,
-		Geometry:      toGeometryDTO(geo),
-		MaxTensionKgf: wheel.MaxTensionKgf,
+		Orientation:          wheel.OrientationHeader(),
+		Actions:              make([]actionDTO, len(res.Actions)),
+		Turns:                res.Turns,
+		RawTurns:             res.RawTurns,
+		Before:               toMetricsDTO(res.Before),
+		After:                toMetricsDTO(res.After),
+		Predicted:            make([]spokeStateDTO, len(res.Predicted)),
+		Iterations:           res.Iterations,
+		Geometry:             toGeometryDTO(geo),
+		MaxTensionKgf:        wheel.MaxTensionKgf,
+		TensionLimitLeftKgf:  sw.TensionLimitLeftKgf,
+		TensionLimitRightKgf: sw.TensionLimitRightKgf,
 	}
 	for i, a := range res.Actions {
 		dir := "loosen"

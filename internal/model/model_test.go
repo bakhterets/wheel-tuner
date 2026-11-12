@@ -6,6 +6,8 @@ import (
 	"math"
 	"strings"
 	"testing"
+
+	"github.com/bakhterets/wheel-tuner/internal/tensiometer"
 )
 
 func validWheel() WheelSetup {
@@ -27,7 +29,7 @@ func TestWheelNormalize(t *testing.T) {
 	w := WheelSetup{Name: "  Front  ", ViewPoint: " ", CountingDirection: " ccw ", SpokeGaugeLeft: "2.0"}
 	w.Normalize()
 	want := WheelSetup{Name: "Front", StartReference: DefaultStartReference, ViewPoint: DefaultViewPoint,
-		CountingDirection: "CCW", SpokeType: SpokeJBend}
+		CountingDirection: "CCW", SpokeType: SpokeJBend, TensionLimitUnit: LimitUnitKgf}
 	if w != want {
 		t.Fatalf("Normalize = %+v, want %+v", w, want)
 	}
@@ -37,9 +39,9 @@ func TestWheelNormalize(t *testing.T) {
 		w.Tensiometer != "ztto-tc-02" || w.SpokeGaugeLeft != "2.0" || w.SpokeGaugeRight != "1.8" {
 		t.Fatalf("Normalize = %+v", w)
 	}
-	w = WheelSetup{SpokeType: "j-bend"}
-	if w.Normalize(); w.SpokeType != SpokeJBend {
-		t.Fatalf("spoke type = %q, want %q", w.SpokeType, SpokeJBend)
+	w = WheelSetup{SpokeType: "j-bend", TensionLimitUnit: " Reading "}
+	if w.Normalize(); w.SpokeType != SpokeJBend || w.TensionLimitUnit != LimitUnitReading {
+		t.Fatalf("spoke type = %q, limit unit = %q", w.SpokeType, w.TensionLimitUnit)
 	}
 }
 
@@ -66,6 +68,13 @@ func TestWheelValidate(t *testing.T) {
 		{"negative max tension", func(w *WheelSetup) { w.MaxTensionKgf = -1 }, "max_tension_kgf"},
 		{"NaN max tension", func(w *WheelSetup) { w.MaxTensionKgf = math.NaN() }, "max_tension_kgf"},
 		{"infinite max tension", func(w *WheelSetup) { w.MaxTensionKgf = math.Inf(1) }, "max_tension_kgf"},
+		{"paired straight-pull", func(w *WheelSetup) { w.SpokeType, w.PairedSpokes = SpokeStraightPull, true }, ""},
+		{"paired J-bend", func(w *WheelSetup) { w.PairedSpokes = true }, "paired_spokes"},
+		{"tension limit in kgf", func(w *WheelSetup) { w.TensionLimit, w.TensionLimitUnit = 110, LimitUnitKgf }, ""},
+		{"negative tension limit", func(w *WheelSetup) { w.TensionLimit = -1 }, "tension_limit"},
+		{"NaN tension limit", func(w *WheelSetup) { w.TensionLimit = math.NaN() }, "tension_limit"},
+		{"infinite tension limit", func(w *WheelSetup) { w.TensionLimit = math.Inf(1) }, "tension_limit"},
+		{"bad tension limit unit", func(w *WheelSetup) { w.TensionLimitUnit = "N" }, "tension_limit_unit"},
 		{"zero rim id", func(w *WheelSetup) { w.RimComponentID = &zero }, "rim_component_id"},
 		{"zero hub id", func(w *WheelSetup) { w.HubComponentID = &zero }, "hub_component_id"},
 		{"gauge without tensiometer", func(w *WheelSetup) { w.SpokeGaugeRight = "2.0" }, "tensiometer"},
@@ -99,6 +108,73 @@ func TestWheelValidate(t *testing.T) {
 	}
 	if IsValidation(errors.New("other")) {
 		t.Fatal("plain errors are not validation errors")
+	}
+}
+
+func TestTensionLimitsKgf(t *testing.T) {
+	gauge := func(id string, reading float64) float64 {
+		g, err := tensiometer.Lookup("ztto-tc-02", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		kgf, err := g.Kgf(reading)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return kgf
+	}
+	tc02 := func(w *WheelSetup) {
+		w.Tensiometer, w.SpokeGaugeLeft, w.SpokeGaugeRight = "ztto-tc-02", "2.0-1.8-2.0", "1.8"
+	}
+	tests := []struct {
+		name        string
+		mutate      func(*WheelSetup)
+		left, right float64
+		field       string
+	}{
+		{"no limits", func(*WheelSetup) {}, 0, 0, ""},
+		{"desired limit in kgf", func(w *WheelSetup) { w.TensionLimit = 110 }, 110, 110, ""},
+		{"rim maximum only", func(w *WheelSetup) { w.MaxTensionKgf = 122 }, 122, 122, ""},
+		{"lower of desired and rim maximum", func(w *WheelSetup) { w.TensionLimit, w.MaxTensionKgf = 130, 122 }, 122, 122, ""},
+		{"desired below rim maximum", func(w *WheelSetup) { w.TensionLimit, w.MaxTensionKgf = 100, 122 }, 100, 100, ""},
+		{"kgf unit ignores the tensiometer", func(w *WheelSetup) { tc02(w); w.TensionLimit = 2.8 }, 2.8, 2.8, ""},
+		{"TC-02 reading converted per side", func(w *WheelSetup) {
+			tc02(w)
+			w.TensionLimit, w.TensionLimitUnit = 2.8, LimitUnitReading
+		}, gauge("2.0-1.8-2.0", 2.8), gauge("1.8", 2.8), ""},
+		{"reading capped by rim maximum", func(w *WheelSetup) {
+			tc02(w)
+			w.TensionLimit, w.TensionLimitUnit, w.MaxTensionKgf = 2.8, LimitUnitReading, 100
+		}, 100, gauge("1.8", 2.8), ""},
+		{"zero reading limit", func(w *WheelSetup) { w.TensionLimitUnit = LimitUnitReading }, 0, 0, ""},
+		{"reading without tensiometer", func(w *WheelSetup) {
+			w.TensionLimit, w.TensionLimitUnit = 2.8, LimitUnitReading
+		}, 0, 0, "tension_limit_unit"},
+		{"reading out of the left gauge table", func(w *WheelSetup) {
+			tc02(w)
+			w.TensionLimit, w.TensionLimitUnit = 9, LimitUnitReading
+		}, 0, 0, "tension_limit"},
+		{"unknown right gauge", func(w *WheelSetup) {
+			tc02(w)
+			w.SpokeGaugeRight, w.TensionLimit, w.TensionLimitUnit = "9.9", 2.8, LimitUnitReading
+		}, 0, 0, "tension_limit"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := validWheel()
+			tc.mutate(&w)
+			l, r, err := w.TensionLimitsKgf()
+			if tc.field != "" {
+				var ve *ValidationError
+				if !errors.As(err, &ve) || ve.Field != tc.field {
+					t.Fatalf("err = %v, want field %q", err, tc.field)
+				}
+				return
+			}
+			if err != nil || l != tc.left || r != tc.right {
+				t.Fatalf("limits = %v / %v, %v; want %v / %v", l, r, err, tc.left, tc.right)
+			}
+		})
 	}
 }
 

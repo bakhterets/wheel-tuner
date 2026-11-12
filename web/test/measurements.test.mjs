@@ -1,12 +1,29 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { defaultRows, defaultSide, resizeRows, rowsFromMeasurements, toMeasurements } from '../static/js/measurements.js';
+import {
+  assignSides, defaultRows, defaultSide, firstSide, resizeRows, rowsFromMeasurements, sideIndexes, toMeasurements,
+} from '../static/js/measurements.js';
 
 describe('measurement rows', () => {
   it('alternates sides L/R starting with L', () => {
     assert.deepEqual(defaultRows(4).map((r) => `${r.side}${r.spoke_index}`), ['L1', 'R2', 'L3', 'R4']);
     assert.equal(defaultSide(36), 'R');
+    assert.equal(defaultSide(1, 'R'), 'R');
+    assert.equal(defaultSide(2, 'R'), 'L');
+  });
+
+  it('moves spoke #1 to the other flange keeping the measured values', () => {
+    const rows = defaultRows(4);
+    rows[0].tension_kgf = 101;
+    const swapped = assignSides(rows, 'R');
+    assert.deepEqual(swapped.map((r) => r.side), ['R', 'L', 'R', 'L']);
+    assert.equal(swapped[0].tension_kgf, 101);
+    assert.equal(rows[0].side, 'L', 'input rows are not mutated');
+    assert.equal(firstSide(swapped), 'R');
+    assert.equal(firstSide([]), 'L');
+    assert.deepEqual(sideIndexes(swapped, 'L'), [1, 3]);
+    assert.deepEqual(resizeRows(swapped, 6).map((r) => r.side), ['R', 'L', 'R', 'L', 'R', 'L'], 'new rows continue the alternation');
   });
 
   it('resizes keeping existing data', () => {

@@ -19,8 +19,47 @@ go run ./cmd/wheel-tuner -addr 127.0.0.1:9000 -db /tmp/wheels.db -log-level debu
 | `-addr`      | `:8080`          | listen address                          |
 | `-db`        | `wheel-tuner.db` | SQLite file (created automatically)     |
 | `-log-level` | `info`           | `debug`, `info`, `warn`, `error`        |
+| `-web`       | `true`           | serve the embedded UI; `false` = API only (microservice mode) |
 
 Shutdown is graceful on SIGINT/SIGTERM: in-flight requests get up to 10 s to finish.
+
+## Containers (microservices)
+
+Backend and frontend are built and run as two independent images:
+
+| Image | Dockerfile | Contents | Port |
+|-------|------------|----------|------|
+| `wheel-tuner-api` | [Dockerfile](Dockerfile) | static Go binary on `distroless/static:nonroot`, run with `-web=false`, SQLite in the `/data` volume | 8080 |
+| `wheel-tuner-web` | [web/Dockerfile](web/Dockerfile) | `nginx-unprivileged` serving `web/static`; proxies `/api/` and `/healthz` to `BACKEND_URL` | 8080 |
+
+```sh
+docker compose up -d --build     # UI on http://localhost:8080, API reachable only via the web proxy
+docker compose down
+```
+
+- `BACKEND_URL` (web image, default `http://api:8080`, **no trailing slash**) points nginx at the API; it is substituted from [web/nginx/default.conf.template](web/nginx/default.conf.template) at start-up. The web container is stateless and scales independently.
+- Probes: web — `GET /livez` (nginx itself), `GET /healthz` (proxied API health); api — `GET /healthz`. The distroless image has no shell, so use orchestrator probes (`httpGet` in Kubernetes) rather than a Docker `HEALTHCHECK`.
+- The API runs as uid 65532; mount a writable volume at `/data`. SQLite allows **one** API replica per volume.
+- Without containers: `make run-api` (API on `:8081`, no UI) or the default single binary with the embedded UI.
+
+## CI/CD and quay.io
+
+[.github/workflows/ci.yml](.github/workflows/ci.yml) runs on every push and pull request:
+
+1. `go` — gofmt, vet, golangci-lint, `go test -race` with coverage.
+2. `web` — JS tests with coverage.
+3. `smoke` — `docker compose up --build`, then checks `/livez`, `/healthz`, `/`, `/api/tensiometers` and `/api/components/hubs` through the web proxy.
+4. `images` — builds both images (matrix `api`, `web`) with the GHA layer cache. They are **pushed only on a push to `main`** (i.e. after a merge) to `quay.io/<namespace>/wheel-tuner-{api,web}` with tags `sha-<short>` and `latest`. Pull requests only build.
+
+Repository setup (Settings → Secrets and variables → Actions):
+
+| Kind | Name | Value |
+|------|------|-------|
+| Secret | `QUAY_USERNAME` | quay.io robot account, e.g. `bakhterets+github_ci` |
+| Secret | `QUAY_PASSWORD` | robot account token |
+| Variable (optional) | `QUAY_NAMESPACE` | quay.io organisation/user; defaults to the GitHub owner |
+
+Create both repositories (`wheel-tuner-api`, `wheel-tuner-web`) on quay.io and give the robot account *Write* permission on them.
 
 ## Development
 
@@ -33,7 +72,7 @@ make build      # bin/wheel-tuner
 
 The JS tests need Node ≥ 20 and no dependencies: `cd web && node --test --experimental-test-coverage test/`. The DOM is replaced by a minimal fake ([web/test/fakedom.mjs](web/test/fakedom.mjs)).
 
-CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs gofmt, vet, golangci-lint, the Go tests with `-race`, and the JS tests.
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) is described in [CI/CD and quay.io](#cicd-and-quayio).
 
 ## Layout
 
@@ -92,7 +131,10 @@ Profile (the first nine fields are required; the rest are optional and shown wit
   "flange_diam_left_mm": 38.5,
   "flange_diam_right_mm": 38.5,
   "spoke_type": "Straightpull",
+  "paired_spokes": true,
   "max_tension_kgf": 122,
+  "tension_limit": 2.85,
+  "tension_limit_unit": "reading",
   "tensiometer": "ztto-tc-02",
   "spoke_gauge_left": "2.0-1.8-2.0",
   "spoke_gauge_right": "2.0-1.8-2.0"
@@ -103,7 +145,9 @@ Profile (the first nine fields are required; the rest are optional and shown wit
 - `rim_asymmetry_offset_mm`: offset of the spoke bed for asymmetric rims. `+` shifts it toward the left flange, which shortens the left flange distance and lengthens the right one.
 - `flange_diam_*_mm`: hub flange pitch-circle diameter (PCD). `0` models the spoke as starting at the hub axis (the stage 01 behaviour).
 - `spoke_type`: `J-Bend` (default) or `Straightpull`.
-- `max_tension_kgf`: the rim's tension limit (`0` = unknown, no warnings).
+- `paired_spokes`: straight-pull hubs that seat spokes in pairs (Newmen Fade SP, DT Swiss 240 SP …). Only valid with `Straightpull`; see *Spoke geometry*.
+- `max_tension_kgf`: the rim's tension limit (`0` = unknown). It is a **hard cap**: the solver never plans a turn that would push a predicted tension above it.
+- `tension_limit` + `tension_limit_unit`: the builder's desired maximum tension (`0` = none). The unit is `kgf` (default) or `reading`. A reading is a tensiometer value (e.g. TC‑02 mm) and is converted per side with that side's spoke gauge, so L and R may get different kgf caps. `reading` requires a tensiometer, and the value must lie in the calibrated range. The effective cap per side is the lower of the positive values `tension_limit` and `max_tension_kgf`.
 - `tensiometer` + `spoke_gauge_*`: when set, measurements may carry `tension_reading` instead of `tension_kgf`. The gauge IDs come from `GET /api/tensiometers`.
 
 Session measurements: `POST /api/wheels/1/sessions` with `{"measurements": [...]}`. Each element looks like this:
@@ -139,11 +183,12 @@ The solve response (abridged):
     "tension_ratio": 1.17
   },
   "max_tension_kgf": 122,
+  "tension_limit_left_kgf": 105, "tension_limit_right_kgf": 105,
   "iterations": 12
 }
 ```
 
-`tension_warning` ("Approaching Max Rim Tension") is set when `max_tension_kgf > 0` and the predicted tension is at least 95% of it. `POST /api/geometry` accepts a profile body and returns the `geometry` object alone. The UI uses it for a live preview.
+`tension_limit_*_kgf` are the effective per-side caps that the solver enforced (`0` = none). `tension_warning` ("Approaching Max Rim Tension") is set when `max_tension_kgf > 0` and the predicted tension is at least 95% of it. `POST /api/geometry` accepts a profile body and returns the `geometry` object alone. The UI uses it for a live preview.
 
 Component library (`GET /api/components/hubs`, abridged):
 
@@ -162,13 +207,13 @@ Rims carry `brand`, `model`, `wheel_size`, `hole_counts`, `erd_mm`, `asymmetry_o
 | Hubs | Newmen Fade (SP/J-bend, front/rear, Boost/157), DT Swiss 180/240/350 (SP/J-bend, 6-bolt/CL, Boost and non-Boost) | Newmen *Hub_Flange_Dimensions.pdf*, DT Swiss spoke calculator |
 | Tensiometers | ZTTO TC‑02 (reading in mm, 7 spoke gauges incl. butted), Park Tool TM‑1 (scale reading, round steel 1.4–2.6 mm) | manufacturer conversion tables |
 
-The Newmen Fade SP front hub is made in **28H only**, so the library warns when it is paired with a 32H rim.
+The Newmen Fade SP front hub exists in **28H and 32H** with different flange geometry (28H: PCD 38.5 mm, flange offsets 29.0/34.0 mm; 32H: PCD 50.5 mm, 28.5/37.1 mm, per the Newmen PDF), so the library has one row per drilling. The library notes warn when a hub and a rim have different hole counts.
 
 ## Model and conventions
 
 **Signs.** Lateral `+` means toward the right (drive-side) flange. Radial `+` is a high spot (hop) relative to the mean radius; a uniform offset is ignored. Tightening a spoke pulls the rim toward its own flange and reduces the radius. Sides: `L` is the left / rotor / non-drive side, `R` is the right / drive side. The view point (`Rotor Side`, `Drive Side`, `Left`, `Right`, …) and the counting direction (`CW`/`CCW`) only affect the crossing topology and the instructions shown on screen.
 
-**Spoke geometry** (`internal/solver/geometry.go`). For each flange, the effective flange distance is `F_L = flange_left − rim_offset` and `F_R = flange_right + rim_offset`. The hub end of a crossed spoke is rotated by `θ = cross·720°/N`. Spoke length is `L = √(D² + F² + R² − 2·D·R·cos θ)`, with `D = PCD/2` and `R = ERD/2`; J-bend lengths subtract the 1.2 mm flange-hole radius. The bracing angle is `α = asin(F/L)`. A true wheel balances the lateral components, `T_L·sin α_L = T_R·sin α_R`, so the expected tension ratio is `T_L/T_R = sin α_R / sin α_L`.
+**Spoke geometry** (`internal/solver/geometry.go`). For each flange, the effective flange distance is `F_L = flange_left − rim_offset` and `F_R = flange_right + rim_offset`. The hub end of a crossed spoke is rotated by `θ = cross·720°/N`. **Paired straight-pull hubs** (`paired_spokes`) seat two spokes side by side, so each spoke's hub end is rotated a further half flange-hole pitch: `θ = cross·720°/N + 360°/N`. Example: DT Swiss F 572 29″ (ERD 602) + Fade SP front 28H, 3x → L 303.0 / R 303.5 mm (without the pair offset the result would be ≈ 298.7 / 299.2 mm, ~4 mm too short). Spoke length is `L = √(D² + F² + R² − 2·D·R·cos θ)`, with `D = PCD/2` and `R = ERD/2`; J-bend lengths subtract the 1.2 mm flange-hole radius. The bracing angle is `α = asin(F/L)`. A true wheel balances the lateral components, `T_L·sin α_L = T_R·sin α_R`, so the expected tension ratio is `T_L/T_R = sin α_R / sin α_L`.
 
 **Influence matrix** (`internal/solver/influence.go`), a force model:
 - One nipple turn adds `ΔT = SpokeRigidity·pitch / L` (Hooke's law; `16000 kgf · 0.45 mm / 290 mm ≈ 25 kgf/turn`).
@@ -186,10 +231,14 @@ Truing is iterative: apply the plan, re-measure, and solve again in a new sessio
 
 ## UI
 
-- **Component library:** brand/model pickers for the rim and the hub fill the profile fields, which stay editable. Notes flag hole-count mismatches, for example the Fade SP front hub (28H) with a 32H rim.
+- **Component library:** brand/model pickers for the rim and the hub fill the profile fields, which stay editable. Notes flag hole-count mismatches, for example a 28H hub with a 32H rim. Picking a paired straight-pull hub ticks *Paired SP heads*.
 - **Live geometry panel:** spoke lengths, flange offsets, bracing angles, ΔT per turn and the L/R tension ratio, recomputed as the fields change.
 - **Tensiometer mode:** pick a tensiometer and per-side spoke gauges. The tension column then takes raw readings (also through clipboard paste) and shows the converted `≈ kgf` beside each cell. Out-of-range readings are marked invalid with the calibrated range.
 - **Rim limit:** actions and predictions at ≥ 95% of the rim's max tension are flagged with ⚠️ *Approaching Max Rim Tension*.
+- **Desired max tension:** a cap in kgf or in tensiometer units (e.g. TC‑02 reading 2.85). The results show the enforced per-side caps (*Tension cap (desired limit / rim max): Left ≤ 105 kgf · Right ≤ 105 kgf*).
+- **Split measurement tables:** *Left side — rotor* and *Right side*, for both front and rear wheels. The *Spoke #1 is on* toggle sets which side spoke 1 belongs to; the sides alternate from there. Rows keep their global spoke number.
+- **Bulk list input:** each side has a field for a list such as `[3.15,3.16,3.05,…]` (brackets optional; separators `,` or whitespace, or `;` when values use decimal commas) and a column picker (tension/reading, lateral, radial). Values fill that side's spokes in order; too many values or a non-number is rejected with a message. Clipboard paste from Excel also walks down the same side.
+- **Persistence:** the profile form, the measurement grid and the last result are stored in `localStorage` (`wheel-tuner:state`) and restored after a page reload. Corrupt or foreign data is ignored, never overwritten before a successful restore.
 
 ## Deviations from the spec
 
@@ -205,7 +254,7 @@ Truing is iterative: apply the plan, re-measure, and solve again in a new sessio
 | `internal/api`         | 100%     |
 | `web` (embed)          | 100%     |
 | `internal/store`       | ~93%     |
-| `cmd/wheel-tuner`      | ~77%     |
+| `cmd/wheel-tuner`      | ~78%     |
 | JS modules             | 100% lines/branches/functions |
 
 Uncovered: SQLite driver error branches (`rows.Err`, `Scan`, `Commit` failures that cannot be reproduced without fault injection into the driver), and `main()` itself (all logic lives in `run()`, which is tested). `main.js` and `setup.js` are browser wiring, checked manually and end to end.

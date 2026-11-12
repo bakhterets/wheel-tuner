@@ -75,10 +75,18 @@ func TestComponentLibrarySeeded(t *testing.T) {
 	fade := findHub(t, hubs, "Newmen", "Fade SP Front 15x110 Boost 6-bolt/CL")
 	wantHub := model.HubComponent{ID: fade.ID, Brand: "Newmen", Model: "Fade SP Front 15x110 Boost 6-bolt/CL",
 		Position: "front", Axle: "15x110 Boost", FlangeDistLeftMM: 29, FlangeDistRightMM: 34,
-		FlangeDiamLeftMM: 38.5, FlangeDiamRightMM: 38.5, SpokeType: model.SpokeStraightPull,
+		FlangeDiamLeftMM: 38.5, FlangeDiamRightMM: 38.5, SpokeType: model.SpokeStraightPull, PairedSpokes: true,
 		HoleCounts: []int{28}, Source: srcNewmenHubs}
 	if !reflect.DeepEqual(fade, wantHub) {
 		t.Fatalf("Fade SP front = %+v, want %+v", fade, wantHub)
+	}
+	// The 32h straight-pull Fade front has its own, larger flanges.
+	if h := findHub(t, hubs, "Newmen", "Fade SP Front 15x110 Boost 6-bolt 32h"); h.FlangeDiamLeftMM != 50.5 ||
+		h.FlangeDistLeftMM != 28.5 || h.FlangeDistRightMM != 37.1 || !h.PairedSpokes || !reflect.DeepEqual(h.HoleCounts, []int{32}) {
+		t.Fatalf("Fade SP front 32h = %+v", h)
+	}
+	if h := findHub(t, hubs, "Newmen", "Fade Front 15/20x110 Boost 6-bolt"); h.PairedSpokes {
+		t.Fatalf("J-bend hub marked paired: %+v", h)
 	}
 	if h := findHub(t, hubs, "DT Swiss", "240 Rear 12x148 Boost 6-bolt"); len(h.HoleCounts) != 0 || h.Position != "rear" {
 		t.Fatalf("DT 240 rear = %+v", h)
@@ -223,7 +231,7 @@ func TestMigrateFromStage01(t *testing.T) {
 	}
 	want := model.WheelSetup{ID: 1, Name: "legacy", SpokesCount: 4, ERDMM: 600, FlangeDistLeftMM: 35,
 		FlangeDistRightMM: 20, StartReference: "Valve", ViewPoint: "Drive Side", CountingDirection: "CCW",
-		SpokeType: model.SpokeJBend}
+		SpokeType: model.SpokeJBend, TensionLimitUnit: model.LimitUnitKgf}
 	if !reflect.DeepEqual(w, want) {
 		t.Fatalf("migrated wheel = %+v, want %+v", w, want)
 	}

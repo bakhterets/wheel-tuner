@@ -12,8 +12,11 @@ export const DEFAULT_WHEEL = Object.freeze({
   flange_diam_left_mm: 0,
   flange_diam_right_mm: 0,
   spoke_type: 'J-Bend',
+  paired_spokes: false,
   rim_asymmetry_offset_mm: 0,
   max_tension_kgf: 0,
+  tension_limit: 0,
+  tension_limit_unit: 'kgf',
   rim_component_id: null,
   hub_component_id: null,
   tensiometer: '',
@@ -26,8 +29,9 @@ export const DEFAULT_WHEEL = Object.freeze({
 
 const NUMERIC = new Set([
   'id', 'spokes_count', 'erd_mm', 'cross_pattern', 'flange_dist_left_mm', 'flange_dist_right_mm',
-  'flange_diam_left_mm', 'flange_diam_right_mm', 'rim_asymmetry_offset_mm', 'max_tension_kgf',
+  'flange_diam_left_mm', 'flange_diam_right_mm', 'rim_asymmetry_offset_mm', 'max_tension_kgf', 'tension_limit',
 ]);
+const CHECKBOXES = new Set(['paired_spokes']);
 const COMPONENT_IDS = new Set(['rim_component_id', 'hub_component_id']);
 
 /** Reads the profile form into an API wheel object; empty component ids are null. */
@@ -37,14 +41,18 @@ export function readForm(form) {
   for (const key of Object.keys(DEFAULT_WHEEL)) {
     const v = fd.get(key);
     if (v === null) {
-      continue;
+      continue; // also an unchecked checkbox: keeps the default false
     }
-    if (COMPONENT_IDS.has(key)) {
+    if (CHECKBOXES.has(key)) {
+      w[key] = true;
+    } else if (COMPONENT_IDS.has(key)) {
       w[key] = Number(v) > 0 ? Number(v) : null;
     } else {
       w[key] = NUMERIC.has(key) ? Number(String(v).replace(',', '.')) : String(v);
     }
   }
+  // Paired heads exist on straight-pull hubs only; the server rejects other combinations.
+  w.paired_spokes &&= w.spoke_type === 'Straightpull';
   return w;
 }
 
@@ -64,6 +72,8 @@ export function fillForm(form, wheel) {
       if (!matched && field[0]) {
         field[0].checked = true;
       }
+    } else if (CHECKBOXES.has(key)) {
+      field.checked = Boolean(value);
     } else {
       field.value = value === null ? '' : String(value);
     }

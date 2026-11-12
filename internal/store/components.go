@@ -15,7 +15,7 @@ const (
 	rimColumns = `id, brand, model, wheel_size, hole_counts, erd_mm, asymmetry_offset_mm,
 		max_tension_kgf, source`
 	hubColumns = `id, brand, model, position, axle, flange_dist_left_mm, flange_dist_right_mm,
-		flange_diam_left_mm, flange_diam_right_mm, spoke_type, hole_counts, source`
+		flange_diam_left_mm, flange_diam_right_mm, spoke_type, paired_spokes, hole_counts, source`
 )
 
 func joinInts(v []int) string {
@@ -64,7 +64,7 @@ func scanHub(r scanner) (model.HubComponent, error) {
 		holes string
 	)
 	err := r.Scan(&c.ID, &c.Brand, &c.Model, &c.Position, &c.Axle, &c.FlangeDistLeftMM,
-		&c.FlangeDistRightMM, &c.FlangeDiamLeftMM, &c.FlangeDiamRightMM, &c.SpokeType, &holes, &c.Source)
+		&c.FlangeDistRightMM, &c.FlangeDiamLeftMM, &c.FlangeDiamRightMM, &c.SpokeType, &c.PairedSpokes, &holes, &c.Source)
 	if errors.Is(err, sql.ErrNoRows) {
 		return c, model.ErrNotFound
 	}

@@ -44,6 +44,7 @@ func Solve(w Wheel, ms []Measurement, p Params) (*Result, error) {
 		return nil, err
 	}
 	pr := newProblem(inf, sorted, p)
+	pr.wheel = w
 	raw, turns, iters, err := pr.optimize(p)
 	if err != nil {
 		return nil, err
@@ -67,6 +68,7 @@ func Solve(w Wheel, ms []Measurement, p Params) (*Result, error) {
 // problem is the stacked weighted least-squares system e0 + A·x → 0.
 type problem struct {
 	n                int
+	wheel            Wheel
 	ms               []Measurement
 	a                *Matrix
 	w                []float64
@@ -205,15 +207,79 @@ func sideMeans(ms []Measurement, value func(i int) float64) map[Side]float64 {
 	return means
 }
 
-func (pr problem) optimize(p Params) (raw, turns []float64, iterations int, err error) {
-	s := leastSquares{
-		a: pr.a, w: pr.w, b: negate(pr.e0),
-		ridge: p.Weights.Turns, tol: p.Tolerance, maxIter: p.MaxIterations,
+// limitWeight (per kgf²) penalises predicted tension above a side limit. One
+// kgf over the limit costs as much as 1 mm of lateral runout, while a turn
+// changes tension by ≈15 kgf, so active limits hold to a fraction of a kgf.
+const limitWeight = 1.0
+
+// limitTolKgf is the overshoot that activates a tension limit row.
+const limitTolKgf = 1e-6
+
+// limitRows returns, per spoke, the tension cap enforced by a penalty row; 0
+// means no cap (no side limit or the tension was not measured).
+func (pr problem) limitRows() []float64 {
+	caps := make([]float64, pr.n)
+	for i, m := range pr.ms {
+		if m.TensionKgf > 0 {
+			caps[i] = pr.wheel.tensionLimit(m.Side)
+		}
 	}
+	return caps
+}
+
+// limitSystem appends one zero-weight row per spoke to the least-squares
+// system: T_i + ΔT_i(x) → cap_i. Rows get weight limitWeight once active.
+func (pr problem) limitSystem(p Params) (leastSquares, []float64) {
+	caps := pr.limitRows()
+	off := pr.latRows + pr.radRows
+	rows := pr.a.rows + pr.n
+	a := NewMatrix(rows, pr.n)
+	copy(a.data, pr.a.data)
+	for i := range pr.n {
+		copy(a.row(pr.a.rows+i), pr.a.row(off+i))
+	}
+	b := append(negate(pr.e0), make([]float64, pr.n)...)
+	for i, c := range caps {
+		b[pr.a.rows+i] = c - pr.ms[i].TensionKgf
+	}
+	w := append(append([]float64(nil), pr.w...), make([]float64, pr.n)...)
+	return leastSquares{a: a, w: w, b: b, ridge: p.Weights.Turns, tol: p.Tolerance, maxIter: p.MaxIterations}, caps
+}
+
+// activateLimits switches on the penalty rows of spokes predicted above
+// their cap; it reports whether any row was newly activated.
+func (pr problem) activateLimits(s leastSquares, caps, x []float64) bool {
+	tension := pr.tensionAfter(x)
+	changed := false
+	for i, c := range caps {
+		row := pr.a.rows + i
+		if c > 0 && s.w[row] == 0 && tension[i] > c+limitTolKgf {
+			s.w[row] = limitWeight
+			changed = true
+		}
+	}
+	return changed
+}
+
+// solveLimited solves the free variables, re-solving while new tension
+// limits become active. Active rows stay active, so it ends after ≤ n+1 passes.
+func (pr problem) solveLimited(s leastSquares, caps, x []float64, fixed []bool) error {
+	for {
+		if _, err := s.solve(x, fixed); err != nil {
+			return err
+		}
+		if !pr.activateLimits(s, caps, x) {
+			return nil
+		}
+	}
+}
+
+func (pr problem) optimize(p Params) (raw, turns []float64, iterations int, err error) {
+	s, caps := pr.limitSystem(p)
 	x := make([]float64, pr.n)
 	fixed := make([]bool, pr.n)
 	for free := pr.n; free > 0; free-- {
-		if _, err := s.solve(x, fixed); err != nil {
+		if err := pr.solveLimited(s, caps, x, fixed); err != nil {
 			return nil, nil, iterations, err
 		}
 		iterations++
@@ -235,9 +301,44 @@ func (pr problem) optimize(p Params) (raw, turns []float64, iterations int, err 
 			}
 			break
 		}
-		x[k], fixed[k] = q, true
+		x[k], fixed[k] = pr.capTurn(caps, x, k, q, p.TurnStep), true
 	}
+	pr.enforceLimits(caps, x, p.TurnStep)
 	return raw, x, iterations, nil
+}
+
+// capTurn lowers a rounded turn by one step when it would leave spoke k
+// above its tension cap, so the remaining spokes are re-optimised around it.
+func (pr problem) capTurn(caps, x []float64, k int, q, step float64) float64 {
+	if caps[k] == 0 {
+		return q
+	}
+	cont := x[k]
+	x[k] = q
+	over := pr.tensionAfter(x)[k] > caps[k]+limitTolKgf
+	x[k] = cont
+	if over {
+		return q - step
+	}
+	return q
+}
+
+// enforceLimits loosens capped spokes that rounding (or turns skipped below
+// MinTurn) left above their cap. Cross-talk is weak, so a few passes settle.
+func (pr problem) enforceLimits(caps, x []float64, step float64) {
+	for range 4 * pr.n {
+		tension := pr.tensionAfter(x)
+		changed := false
+		for i, c := range caps {
+			if c > 0 && tension[i] > c+limitTolKgf {
+				x[i] -= step
+				changed = true
+			}
+		}
+		if !changed {
+			return
+		}
+	}
 }
 
 func negate(v []float64) []float64 {

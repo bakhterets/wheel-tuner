@@ -12,7 +12,8 @@ import (
 const wheelColumns = `id, name, spokes_count, erd_mm, cross_pattern, flange_dist_left_mm,
 	flange_dist_right_mm, start_reference, view_point, counting_direction, rim_component_id,
 	hub_component_id, rim_asymmetry_offset_mm, flange_diam_left_mm, flange_diam_right_mm, spoke_type,
-	max_tension_kgf, tensiometer, spoke_gauge_left, spoke_gauge_right`
+	max_tension_kgf, tensiometer, spoke_gauge_left, spoke_gauge_right, paired_spokes, tension_limit,
+	tension_limit_unit`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -24,7 +25,8 @@ func scanWheel(r scanner) (model.WheelSetup, error) {
 	err := r.Scan(&w.ID, &w.Name, &w.SpokesCount, &w.ERDMM, &w.CrossPattern, &w.FlangeDistLeftMM,
 		&w.FlangeDistRightMM, &w.StartReference, &w.ViewPoint, &w.CountingDirection, &rim, &hub,
 		&w.RimAsymmetryOffsetMM, &w.FlangeDiamLeftMM, &w.FlangeDiamRightMM, &w.SpokeType,
-		&w.MaxTensionKgf, &w.Tensiometer, &w.SpokeGaugeLeft, &w.SpokeGaugeRight)
+		&w.MaxTensionKgf, &w.Tensiometer, &w.SpokeGaugeLeft, &w.SpokeGaugeRight, &w.PairedSpokes,
+		&w.TensionLimit, &w.TensionLimitUnit)
 	if errors.Is(err, sql.ErrNoRows) {
 		return w, model.ErrNotFound
 	}
@@ -42,7 +44,8 @@ func wheelArgs(w model.WheelSetup) []any {
 	return []any{w.Name, w.SpokesCount, w.ERDMM, w.CrossPattern, w.FlangeDistLeftMM, w.FlangeDistRightMM,
 		w.StartReference, w.ViewPoint, w.CountingDirection, w.RimComponentID, w.HubComponentID,
 		w.RimAsymmetryOffsetMM, w.FlangeDiamLeftMM, w.FlangeDiamRightMM, w.SpokeType,
-		w.MaxTensionKgf, w.Tensiometer, w.SpokeGaugeLeft, w.SpokeGaugeRight}
+		w.MaxTensionKgf, w.Tensiometer, w.SpokeGaugeLeft, w.SpokeGaugeRight, w.PairedSpokes,
+		w.TensionLimit, w.TensionLimitUnit}
 }
 
 // CreateWheel inserts a profile and returns it with its new ID.
@@ -51,7 +54,8 @@ func (s *Store) CreateWheel(ctx context.Context, w model.WheelSetup) (model.Whee
 		cross_pattern, flange_dist_left_mm, flange_dist_right_mm, start_reference, view_point,
 		counting_direction, rim_component_id, hub_component_id, rim_asymmetry_offset_mm,
 		flange_diam_left_mm, flange_diam_right_mm, spoke_type, max_tension_kgf, tensiometer,
-		spoke_gauge_left, spoke_gauge_right) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		spoke_gauge_left, spoke_gauge_right, paired_spokes, tension_limit, tension_limit_unit)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		wheelArgs(w)...)
 	if err != nil {
 		return model.WheelSetup{}, fmt.Errorf("insert wheel: %w", err)
@@ -100,7 +104,8 @@ func (s *Store) UpdateWheel(ctx context.Context, w model.WheelSetup) error {
 		start_reference = ?, view_point = ?, counting_direction = ?, rim_component_id = ?,
 		hub_component_id = ?, rim_asymmetry_offset_mm = ?, flange_diam_left_mm = ?,
 		flange_diam_right_mm = ?, spoke_type = ?, max_tension_kgf = ?, tensiometer = ?,
-		spoke_gauge_left = ?, spoke_gauge_right = ? WHERE id = ?`,
+		spoke_gauge_left = ?, spoke_gauge_right = ?, paired_spokes = ?, tension_limit = ?,
+		tension_limit_unit = ? WHERE id = ?`,
 		append(wheelArgs(w), w.ID)...))
 	if err != nil {
 		return fmt.Errorf("update wheel %d: %w", w.ID, err)

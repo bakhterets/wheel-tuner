@@ -83,6 +83,7 @@ func TestWheelCRUD(t *testing.T) {
 	b.RimComponentID, b.HubComponentID, b.RimAsymmetryOffsetMM = ptr(int64(1)), ptr(int64(2)), 2.5
 	b.FlangeDiamLeftMM, b.FlangeDiamRightMM, b.SpokeType, b.MaxTensionKgf = 38.5, 38.5, model.SpokeStraightPull, 122
 	b.Tensiometer, b.SpokeGaugeLeft, b.SpokeGaugeRight = "ztto-tc-02", "2.0-1.8-2.0", "1.8"
+	b.PairedSpokes, b.TensionLimit, b.TensionLimitUnit = true, 2.8, model.LimitUnitReading
 	if err := s.UpdateWheel(ctx, b); err != nil {
 		t.Fatal(err)
 	}

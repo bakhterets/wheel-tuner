@@ -19,7 +19,7 @@ import (
 // Version 1 is the stage-01 schema: its IF NOT EXISTS clauses make it a no-op
 // on databases created before versioning was introduced.
 func migrations() []string {
-	return []string{schemaV1, schemaV2}
+	return []string{schemaV1, schemaV2, schemaV3}
 }
 
 const schemaV1 = `
@@ -102,6 +102,14 @@ ALTER TABLE wheel_setups ADD COLUMN spoke_gauge_left TEXT NOT NULL DEFAULT '';
 ALTER TABLE wheel_setups ADD COLUMN spoke_gauge_right TEXT NOT NULL DEFAULT '';
 
 ALTER TABLE measurements ADD COLUMN tension_reading REAL;
+`
+
+// schemaV3 adds paired straight-pull hubs and the desired tension limit.
+const schemaV3 = `
+ALTER TABLE hub_components ADD COLUMN paired_spokes BOOLEAN NOT NULL DEFAULT 0;
+ALTER TABLE wheel_setups ADD COLUMN paired_spokes BOOLEAN NOT NULL DEFAULT 0;
+ALTER TABLE wheel_setups ADD COLUMN tension_limit REAL NOT NULL DEFAULT 0;
+ALTER TABLE wheel_setups ADD COLUMN tension_limit_unit TEXT NOT NULL DEFAULT 'kgf';
 `
 
 // Store is a SQLite-backed repository. It is safe for concurrent use.

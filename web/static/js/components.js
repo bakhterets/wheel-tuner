@@ -65,6 +65,7 @@ export function hubPatch(hub, wheel) {
     flange_diam_left_mm: hub.flange_diam_left_mm,
     flange_diam_right_mm: hub.flange_diam_right_mm,
     spoke_type: hub.spoke_type,
+    paired_spokes: Boolean(hub.paired_spokes),
     ...fitSpokes(hub, wheel.spokes_count),
   };
 }

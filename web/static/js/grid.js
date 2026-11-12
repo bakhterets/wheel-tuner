@@ -1,25 +1,28 @@
-// Measurement input grid with spreadsheet paste support.
+// Measurement input: one table per flange (left = rotor side, right) with
+// spreadsheet paste support. Rows keep their global spoke number; a table
+// shows only the spokes of its side.
 import { h } from './dom.js';
+import { sideIndexes } from './measurements.js';
 import { applyPaste, COLUMNS, parseNumber, parseTable } from './paste.js';
 import { applyReadings, readingPreview, tensionPatch } from './tensiometer.js';
 
-const TENSION_COL = COLUMNS.findIndex((c) => c.key === 'tension_kgf');
+/** Columns of a side table: the side is implied by the table. */
+export const GRID_COLUMNS = Object.freeze(COLUMNS.filter((c) => c.type !== 'side'));
+
+const TENSION_COL = GRID_COLUMNS.findIndex((c) => c.key === 'tension_kgf');
 
 /** Grid columns for the active tension mode: with a tensiometer the tension cell holds the reading. */
 export function columnsFor(conv) {
-  return conv ? COLUMNS.map((c, i) => (i === TENSION_COL ? { ...c, key: 'tension_reading' } : c)) : COLUMNS;
+  return conv ? GRID_COLUMNS.map((c, i) => (i === TENSION_COL ? { ...c, key: 'tension_reading' } : c)) : GRID_COLUMNS;
 }
 
 const isUnconverted = (row, conv) => Boolean(conv) && (row.tension_reading ?? null) !== null && row.tension_kgf === null;
 
 function cellInput(row, rowIdx, col, colIdx, conv) {
-  const data = { 'data-row': rowIdx, 'data-col': colIdx, 'aria-label': `${col.key} spoke ${row.spoke_index}` };
+  const data = { 'data-row': rowIdx, 'data-col': colIdx, 'aria-label': `${col.key} spoke ${row.side}${row.spoke_index}` };
   switch (col.type) {
     case 'readonly':
       return h('th', { scope: 'row', tabindex: 0, ...data, text: String(row.spoke_index) });
-    case 'side':
-      return h('td', {}, h('select', { ...data, name: col.key }, ['L', 'R'].map((v) =>
-        h('option', { value: v, selected: row.side === v, text: v }))));
     case 'bool':
       return h('td', { class: 'center' }, h('input', { ...data, type: 'checkbox', checked: row[col.key] }));
     default: {
@@ -37,11 +40,15 @@ function cellInput(row, rowIdx, col, colIdx, conv) {
   }
 }
 
-/** Re-renders the grid body for the given rows; conv switches the tension column to readings. */
-export function renderGrid(tbody, rows, conv = null) {
+/**
+ * Re-renders a side table body with the rows of that side; data-row holds
+ * the position in rows. conv switches the tension column to readings.
+ */
+export function renderGrid(tbody, rows, side, conv = null) {
   const columns = columnsFor(conv);
-  tbody.replaceChildren(...rows.map((row, i) =>
-    h('tr', { class: row.side === 'L' ? 'side-l' : 'side-r' }, columns.map((col, c) => cellInput(row, i, col, c, conv)))));
+  const cls = side === 'L' ? 'side-l' : 'side-r';
+  tbody.replaceChildren(...sideIndexes(rows, side).map((i) =>
+    h('tr', { class: cls }, columns.map((col, c) => cellInput(rows[i], i, col, c, conv)))));
 }
 
 function markInvalid(el, bad) {
@@ -50,34 +57,42 @@ function markInvalid(el, bad) {
 }
 
 function cellPatch(el, row, col, colIdx, conv) {
-  switch (col.type) {
-    case 'bool':
-      return { [col.key]: el.checked };
-    case 'side':
-      return { side: el.value };
-    default: {
-      const value = parseNumber(el.value);
-      const patch = colIdx === TENSION_COL ? tensionPatch(row, value, conv) : (Number.isNaN(value) ? null : { [col.key]: value });
-      markInvalid(el, patch === null);
-      return patch;
-    }
+  if (col.type === 'bool') {
+    return { [col.key]: el.checked };
   }
+  const value = parseNumber(el.value);
+  const patch = colIdx === TENSION_COL ? tensionPatch(row, value, conv) : (Number.isNaN(value) ? null : { [col.key]: value });
+  markInvalid(el, patch === null);
+  return patch;
 }
 
 /**
- * Wires grid events. Typing updates a single row without re-rendering, so the
- * caret is kept; multi-cell paste replaces all rows via onRows.
+ * Pastes a matrix into the side's rows: pasted lines go down the spokes of
+ * that side (L1, L3, L5…), not the global spoke order.
+ */
+export function pasteSide(rows, side, anchorRow, startCol, matrix, columns) {
+  const targets = sideIndexes(rows, side);
+  const start = Math.max(0, targets.indexOf(anchorRow));
+  const pasted = applyPaste(targets.map((i) => rows[i]), start, startCol, matrix, columns);
+  const out = rows.slice();
+  targets.forEach((i, k) => { out[i] = pasted.rows[k]; });
+  return { rows: out, errors: pasted.errors };
+}
+
+/**
+ * Wires the events of one side table. Typing updates a single row without
+ * re-rendering, so the caret is kept; multi-cell paste replaces all rows via onRows.
  * @param {HTMLTableElement} table
- * @param {{getRows: () => object[], onRows: (rows: object[], rerender: boolean) => void,
+ * @param {{side: string, getRows: () => object[], onRows: (rows: object[], rerender: boolean) => void,
  *   onPasteErrors: (errors: object[]) => void, getConverter?: () => object|null}} handlers
  */
-export function bindGrid(table, { getRows, onRows, onPasteErrors, getConverter = () => null }) {
+export function bindGrid(table, { side, getRows, onRows, onPasteErrors, getConverter = () => null }) {
   const update = (ev) => {
     const el = ev.target;
     const rowIdx = Number(el.dataset.row);
     const colIdx = Number(el.dataset.col);
-    const col = COLUMNS[colIdx];
-    if (!col || Number.isNaN(rowIdx)) {
+    const col = GRID_COLUMNS[colIdx];
+    if (!col || Number.isNaN(rowIdx) || col.type === 'readonly') {
       return;
     }
     const conv = getConverter();
@@ -92,12 +107,9 @@ export function bindGrid(table, { getRows, onRows, onPasteErrors, getConverter =
       }
       return;
     }
-    // A side change switches the gauge, so the reading is converted again.
-    [rows[rowIdx]] = applyReadings([{ ...rows[rowIdx], ...patch }], conv);
-    tr.className = rows[rowIdx].side === 'L' ? 'side-l' : 'side-r';
-    if (preview) {
+    rows[rowIdx] = { ...rows[rowIdx], ...patch };
+    if (preview && colIdx === TENSION_COL) {
       preview.textContent = readingPreview(rows[rowIdx], conv);
-      markInvalid(tr.querySelector('input.tension'), isUnconverted(rows[rowIdx], conv));
     }
     onRows(rows, false);
   };
@@ -111,16 +123,16 @@ export function bindGrid(table, { getRows, onRows, onPasteErrors, getConverter =
     }
     ev.preventDefault();
     const anchor = ev.target.closest('[data-row]');
-    const startRow = anchor ? Number(anchor.dataset.row) : 0;
+    const anchorRow = anchor ? Number(anchor.dataset.row) : -1;
     const startCol = anchor ? Number(anchor.dataset.col) : 0;
     const conv = getConverter();
-    const { rows, errors } = applyPaste(getRows(), startRow, startCol, parseTable(text), columnsFor(conv));
+    const { rows, errors } = pasteSide(getRows(), side, anchorRow, startCol, parseTable(text), columnsFor(conv));
     onRows(applyReadings(rows, conv), true);
     onPasteErrors(errors);
   });
 }
 
-/** True when some cell currently holds an unparsable value. */
-export function hasInvalidCells(table) {
-  return table.querySelector('.invalid') !== null;
+/** True when some cell under root currently holds an unparsable value. */
+export function hasInvalidCells(root) {
+  return root.querySelector('.invalid') !== null;
 }

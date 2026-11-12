@@ -159,13 +159,14 @@ describe('renderResults', () => {
 });
 
 describe('grid', () => {
-  function setup(rows) {
+  function setup(rows, side = 'L') {
     const table = container();
     const tbody = container();
     table.append(tbody);
-    renderGrid(tbody, rows);
+    renderGrid(tbody, rows, side);
     const state = { rows, updates: [], pasteErrors: null };
     bindGrid(table, {
+      side,
       getRows: () => state.rows,
       onRows: (next, rerender) => {
         state.rows = next;
@@ -177,74 +178,71 @@ describe('grid', () => {
   }
   const cell = (tbody, row, col) => tbody.children[row].querySelectorAll('[data-col]').find((e) => e.dataset.col === String(col));
 
-  it('renders one row per spoke with side styling and current values', () => {
-    const rows = defaultRows(3);
-    rows[1].lateral_dev_mm = 0.25;
-    rows[1].lat_peak_between_next = true;
-    const { tbody } = setup(rows);
-    assert.equal(tbody.children.length, 3);
-    assert.deepEqual(tbody.children.map((tr) => tr.className), ['side-l', 'side-r', 'side-l']);
-    assert.equal(cell(tbody, 1, 0).textContent, '2');
-    assert.equal(cell(tbody, 1, 3).value, '0.25');
-    assert.equal(cell(tbody, 1, 2).value, '');
-    assert.equal(cell(tbody, 1, 4).checked, true);
-    assert.equal(cell(tbody, 1, 1).children.find((o) => o.getAttribute('selected') !== null).value, 'R');
+  it('renders only the spokes of its side, keeping the global spoke number', () => {
+    const rows = defaultRows(5);
+    rows[3].lateral_dev_mm = 0.25;
+    rows[3].lat_peak_between_next = true;
+    const left = setup(rows, 'L').tbody;
+    assert.deepEqual(left.children.map((tr) => tr.children[0].textContent), ['1', '3', '5']);
+    assert.deepEqual(left.children.map((tr) => tr.className), ['side-l', 'side-l', 'side-l']);
+    const { tbody } = setup(rows, 'R');
+    assert.equal(tbody.children.length, 2);
+    assert.equal(tbody.children[0].className, 'side-r');
+    assert.equal(cell(tbody, 1, 0).textContent, '4');
+    assert.equal(cell(tbody, 1, 0).dataset.row, '3', 'data-row is the position in all rows');
+    assert.equal(cell(tbody, 1, 2).value, '0.25');
+    assert.equal(cell(tbody, 1, 2).getAttribute('aria-label'), 'lateral_dev_mm spoke R4');
+    assert.equal(cell(tbody, 1, 1).value, '');
+    assert.equal(cell(tbody, 1, 3).checked, true);
   });
 
   it('updates rows on typing without re-rendering and flags invalid numbers', () => {
-    const { table, tbody, state } = setup(defaultRows(2));
-    const input = cell(tbody, 0, 3);
+    const { table, tbody, state } = setup(defaultRows(4), 'R');
+    const input = cell(tbody, 0, 2);
     input.value = '-0,3';
     input.dispatch('input');
-    assert.equal(state.rows[0].lateral_dev_mm, -0.3);
+    assert.equal(state.rows[1].lateral_dev_mm, -0.3);
     assert.deepEqual(state.updates, [false]);
 
-    const tension = cell(tbody, 0, 2);
+    const tension = cell(tbody, 1, 1);
     tension.value = '-5';
     tension.dispatch('input');
     assert.ok(hasInvalidCells(table));
     assert.equal(tension.getAttribute('aria-invalid'), 'true');
-    assert.equal(state.rows[0].tension_kgf, null);
+    assert.equal(state.rows[3].tension_kgf, null);
     tension.value = '120';
     tension.dispatch('input');
     assert.ok(!hasInvalidCells(table));
-    assert.equal(state.rows[0].tension_kgf, 120);
+    assert.equal(state.rows[3].tension_kgf, 120);
 
-    const peak = cell(tbody, 1, 6);
+    const peak = cell(tbody, 1, 5);
     peak.checked = true;
     peak.dispatch('change');
-    assert.equal(state.rows[1].rad_peak_between_next, true);
-
-    const side = cell(tbody, 1, 1);
-    side.value = 'L';
-    side.dispatch('change');
-    assert.equal(state.rows[1].side, 'L');
-    assert.equal(tbody.children[1].className, 'side-l');
-    side.value = 'R';
-    side.dispatch('change');
-    assert.equal(tbody.children[1].className, 'side-r');
+    assert.equal(state.rows[3].rad_peak_between_next, true);
 
     const before = state.updates.length;
     tbody.dispatch('input'); // event without a cell target
+    cell(tbody, 0, 0).dispatch('input'); // the read-only spoke number
     assert.equal(state.updates.length, before);
   });
 
-  it('pastes spreadsheet blocks from the focused cell', () => {
-    const { tbody, state } = setup(defaultRows(3));
+  it('pastes spreadsheet blocks down the spokes of its side', () => {
+    const { tbody, state } = setup(defaultRows(6), 'L');
     const clip = (text) => ({ clipboardData: { getData: () => text } });
-    const ev = cell(tbody, 1, 2).dispatch('paste', clip('101\t0.4\n102\tbad'));
+    const ev = cell(tbody, 1, 1).dispatch('paste', clip('101\t0.4\n102\tbad\n103'));
     assert.ok(ev.defaultPrevented);
-    assert.equal(state.rows[1].tension_kgf, 101);
-    assert.equal(state.rows[1].lateral_dev_mm, 0.4);
-    assert.equal(state.rows[2].tension_kgf, 102);
+    assert.deepEqual(state.rows.map((r) => r.tension_kgf), [null, null, 101, null, 102, null], 'L3 and L5; L7 does not exist');
+    assert.equal(state.rows[2].lateral_dev_mm, 0.4);
     assert.deepEqual(state.updates, [true]);
     assert.equal(state.pasteErrors.length, 1);
+    assert.equal(state.pasteErrors[0].row, 5);
 
-    const single = cell(tbody, 0, 2).dispatch('paste', clip('99'));
+    const single = cell(tbody, 0, 1).dispatch('paste', clip('99'));
     assert.ok(!single.defaultPrevented, 'single values use the native paste');
 
-    tbody.dispatch('paste', clip('R\nL'));
-    assert.equal(state.rows[0].spoke_index, 1, 'anchor-less paste starts at the index column');
+    tbody.dispatch('paste', clip('x\t98\n\t97'));
+    assert.equal(state.rows[0].tension_kgf, 98, 'anchor-less paste starts at the first spoke of the side');
+    assert.equal(state.rows[2].tension_kgf, 97);
     tbody.dispatch('paste', {});
     assert.equal(state.updates.length, 2);
   });

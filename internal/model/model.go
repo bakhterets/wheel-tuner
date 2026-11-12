@@ -87,7 +87,20 @@ type WheelSetup struct {
 	Tensiometer     string `json:"tensiometer"`
 	SpokeGaugeLeft  string `json:"spoke_gauge_left"`
 	SpokeGaugeRight string `json:"spoke_gauge_right"`
+	// PairedSpokes marks straight-pull hubs whose spokes leave the flange in
+	// leading/trailing pairs (e.g. Newmen Fade SP); it lengthens crossed spokes.
+	PairedSpokes bool `json:"paired_spokes"`
+	// TensionLimit is the desired upper spoke tension, in kgf or (unit
+	// "reading") as a tensiometer reading converted per side; 0 = no limit.
+	TensionLimit     float64 `json:"tension_limit"`
+	TensionLimitUnit string  `json:"tension_limit_unit"`
 }
+
+// Tension limit units.
+const (
+	LimitUnitKgf     = "kgf"
+	LimitUnitReading = "reading"
+)
 
 // Normalize trims text fields and fills defaults for empty ones.
 func (w *WheelSetup) Normalize() {
@@ -99,6 +112,10 @@ func (w *WheelSetup) Normalize() {
 	w.Tensiometer = strings.TrimSpace(w.Tensiometer)
 	w.SpokeGaugeLeft = strings.TrimSpace(w.SpokeGaugeLeft)
 	w.SpokeGaugeRight = strings.TrimSpace(w.SpokeGaugeRight)
+	w.TensionLimitUnit = strings.ToLower(strings.TrimSpace(w.TensionLimitUnit))
+	if w.TensionLimitUnit == "" {
+		w.TensionLimitUnit = LimitUnitKgf
+	}
 	if w.StartReference == "" {
 		w.StartReference = DefaultStartReference
 	}
@@ -134,6 +151,12 @@ func (w WheelSetup) Validate() error {
 		return invalid("spoke_type", "must be %s or %s", SpokeJBend, SpokeStraightPull)
 	case !(w.MaxTensionKgf >= 0) || math.IsInf(w.MaxTensionKgf, 0):
 		return invalid("max_tension_kgf", "must be a finite non-negative number")
+	case w.PairedSpokes && w.SpokeType != SpokeStraightPull:
+		return invalid("paired_spokes", "requires %s spokes", SpokeStraightPull)
+	case !(w.TensionLimit >= 0) || math.IsInf(w.TensionLimit, 0):
+		return invalid("tension_limit", "must be a finite non-negative number")
+	case w.TensionLimitUnit != "" && w.TensionLimitUnit != LimitUnitKgf && w.TensionLimitUnit != LimitUnitReading:
+		return invalid("tension_limit_unit", "must be %s or %s", LimitUnitKgf, LimitUnitReading)
 	case w.RimComponentID != nil && *w.RimComponentID <= 0:
 		return invalid("rim_component_id", "must be positive")
 	case w.HubComponentID != nil && *w.HubComponentID <= 0:
@@ -143,6 +166,49 @@ func (w WheelSetup) Validate() error {
 		return invalid("view_point", "unknown view point %q", w.ViewPoint)
 	}
 	return w.validateTensiometer()
+}
+
+// TensionLimitsKgf returns the upper tension per side (0 = none): the lower
+// of the desired limit and the rim's maximum. A "reading" limit is converted
+// with each side's spoke gauge and must lie within the gauge table. It must
+// run after Validate.
+func (w WheelSetup) TensionLimitsKgf() (left, right float64, err error) {
+	left, right = w.TensionLimit, w.TensionLimit
+	if w.TensionLimit > 0 && w.TensionLimitUnit == LimitUnitReading {
+		if w.Tensiometer == "" {
+			return 0, 0, invalid("tension_limit_unit", "a reading limit requires a tensiometer")
+		}
+		if left, err = w.readingKgf(w.SpokeGaugeLeft); err != nil {
+			return 0, 0, err
+		}
+		if right, err = w.readingKgf(w.SpokeGaugeRight); err != nil {
+			return 0, 0, err
+		}
+	}
+	return minLimit(left, w.MaxTensionKgf), minLimit(right, w.MaxTensionKgf), nil
+}
+
+func (w WheelSetup) readingKgf(gauge string) (float64, error) {
+	g, err := tensiometer.Lookup(w.Tensiometer, gauge)
+	if err != nil {
+		return 0, invalid("tension_limit", "%v", err)
+	}
+	kgf, err := g.Kgf(w.TensionLimit)
+	if err != nil {
+		return 0, invalid("tension_limit", "%v", err)
+	}
+	return kgf, nil
+}
+
+// minLimit combines two limits where 0 means "no limit".
+func minLimit(a, b float64) float64 {
+	switch {
+	case a == 0:
+		return b
+	case b == 0:
+		return a
+	}
+	return math.Min(a, b)
 }
 
 func (w WheelSetup) validateTensiometer() error {
@@ -278,8 +344,10 @@ type HubComponent struct {
 	FlangeDiamLeftMM  float64 `json:"flange_diam_left_mm"`
 	FlangeDiamRightMM float64 `json:"flange_diam_right_mm"`
 	SpokeType         string  `json:"spoke_type"`
-	HoleCounts        []int   `json:"hole_counts"`
-	Source            string  `json:"source"`
+	// PairedSpokes: straight-pull flange with leading/trailing spoke pairs.
+	PairedSpokes bool   `json:"paired_spokes"`
+	HoleCounts   []int  `json:"hole_counts"`
+	Source       string `json:"source"`
 }
 
 // ValidateMeasurements checks that ms holds exactly one entry per spoke.

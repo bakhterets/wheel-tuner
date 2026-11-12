@@ -1,10 +1,14 @@
 // Application entry point: wires state, API calls, forms and visualisations.
 import { createClient } from './api.js';
+import { applyList } from './bulk.js';
 import {
   compatibilityNotes, hubLabel, hubPatch, renderGeometry, renderNotes, renderPicker, rimLabel, rimPatch,
 } from './components.js';
 import { bindGrid, hasInvalidCells, renderGrid } from './grid.js';
-import { resizeRows, rowsFromMeasurements, toMeasurements } from './measurements.js';
+import {
+  assignSides, firstSide, resizeRows, rowsFromMeasurements, toMeasurements,
+} from './measurements.js';
+import { loadState, saveState } from './persist.js';
 import { renderResults } from './results.js';
 import { DEFAULT_WHEEL, fillForm, readForm, renderSessionOptions, renderWheelOptions } from './setup.js';
 import { createStore } from './state.js';
@@ -26,9 +30,12 @@ const ui = {
   notes: $('#library-notes'),
   geometry: $('#geometry'),
   deleteBtn: $('#delete-wheel'),
-  table: $('#grid'),
-  tbody: $('#grid tbody'),
-  tensionHead: $('#tension-head'),
+  measurements: $('#measurements'),
+  tables: { L: $('#grid-left'), R: $('#grid-right') },
+  tbodies: { L: $('#grid-left tbody'), R: $('#grid-right tbody') },
+  tensionHeads: document.querySelectorAll('.tension-head'),
+  bulkForms: document.querySelectorAll('form.bulk'),
+  firstSide: document.querySelectorAll('input[name="first_side"]'),
   solveBtn: $('#solve'),
   clearBtn: $('#clear'),
   sessionSelect: $('#session-select'),
@@ -40,6 +47,17 @@ const ui = {
 const field = (name) => ui.form.elements.namedItem(name);
 
 const api = createClient();
+const SIDES = ['L', 'R'];
+
+/** localStorage, or null where it is unavailable (privacy mode, sandboxed frames). */
+function browserStorage() {
+  try {
+    return globalThis.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+const storage = browserStorage();
 const store = createStore({
   library: { rims: [], hubs: [], tensiometers: [] },
   wheels: [],
@@ -138,7 +156,8 @@ async function selectWheel(id) {
 /** Reloads profiles and selects selectId (undefined: the first profile, 0: a new one). */
 async function refreshWheels(selectId) {
   const wheels = await api.listWheels();
-  const id = selectId ?? wheels[0]?.id ?? 0;
+  // undefined: the first profile; an id that no longer exists: a new profile.
+  const id = selectId === undefined ? wheels[0]?.id ?? 0 : (wheels.some((w) => w.id === selectId) ? selectId : 0);
   store.set({ wheels });
   renderWheelOptions(ui.wheelSelect, wheels, id);
   await selectWheel(id);
@@ -181,7 +200,7 @@ async function deleteWheel() {
 }
 
 async function solve() {
-  if (hasInvalidCells(ui.table)) {
+  if (hasInvalidCells(ui.measurements)) {
     setStatus('Fix the highlighted cells first.', 'error');
     return;
   }
@@ -216,8 +235,15 @@ async function loadSession() {
 
 function render(state, prev) {
   if (state.gridVersion !== prev?.gridVersion) {
-    renderGrid(ui.tbody, state.rows, state.conv);
-    ui.tensionHead.textContent = state.conv ? state.conv.label : 'Tension, kgf';
+    for (const side of SIDES) {
+      renderGrid(ui.tbodies[side], state.rows, side, state.conv);
+    }
+    for (const head of ui.tensionHeads) {
+      head.textContent = state.conv ? state.conv.label : 'Tension, kgf';
+    }
+    for (const radio of ui.firstSide) {
+      radio.checked = radio.value === firstSide(state.rows);
+    }
   }
   if (state.sessions !== prev?.sessions) {
     renderSessionOptions(ui.sessionSelect, state.sessions);
@@ -245,24 +271,73 @@ function render(state, prev) {
   ui.solveBtn.disabled = state.busy;
 }
 
+/** Fills one column of a side table from the list typed into its bulk form. */
+function fillFromList(form) {
+  const { rows, conv } = store.get();
+  const side = form.dataset.side;
+  const column = form.elements.namedItem('column');
+  const key = column.value === 'tension' ? (conv ? 'tension_reading' : 'tension_kgf') : column.value;
+  const { rows: next, error } = applyList(rows, side, key, form.elements.namedItem('values').value);
+  if (error) {
+    setStatus(error, 'error');
+    return;
+  }
+  replaceRows(applyReadings(next, conv));
+  const label = column.selectedOptions[0].textContent;
+  setStatus(`${side === 'L' ? 'Left' : 'Right'} side: ${label} filled.`, 'ok');
+}
+
+// Restoring overwrites nothing until the saved state has been applied.
+let persisting = false;
+
+/** Restores the state saved before the last reload: profile form (with unsaved edits), grid and result. */
+function restore(saved) {
+  const wheel = { ...DEFAULT_WHEEL, ...saved.wheel, id: Number(ui.wheelSelect.value) };
+  syncDependentFields(wheel);
+  fillForm(ui.form, wheel);
+  applyWheel(readForm(ui.form), true);
+  replaceRows(applyReadings(resizeRows(saved.rows, store.get().wheel.spokes_count), store.get().conv));
+  store.set({ result: saved.result });
+}
+
 store.subscribe(render);
+store.subscribe((state, prev) => {
+  if (persisting && (state.wheel !== prev.wheel || state.rows !== prev.rows || state.result !== prev.result)) {
+    saveState(storage, state);
+  }
+});
 render(store.get());
 
-bindGrid(ui.table, {
-  getRows: () => store.get().rows,
-  getConverter: () => store.get().conv,
-  onRows: (rows, rerender) => store.set((st) => ({
-    rows, result: null, gridVersion: rerender ? st.gridVersion + 1 : st.gridVersion,
-  })),
-  onPasteErrors: (errors) => {
-    if (errors.length > 0) {
-      const e = errors[0];
-      setStatus(`${errors.length} pasted cell(s) ignored, e.g. spoke ${e.row} ${e.column}: “${e.value}”.`, 'error');
-    } else {
-      setStatus('Pasted.', 'ok');
-    }
-  },
-});
+for (const side of SIDES) {
+  bindGrid(ui.tables[side], {
+    side,
+    getRows: () => store.get().rows,
+    getConverter: () => store.get().conv,
+    onRows: (rows, rerender) => store.set((st) => ({
+      rows, result: null, gridVersion: rerender ? st.gridVersion + 1 : st.gridVersion,
+    })),
+    onPasteErrors: (errors) => {
+      if (errors.length > 0) {
+        const e = errors[0];
+        setStatus(`${errors.length} pasted cell(s) ignored, e.g. spoke ${e.row} ${e.column}: “${e.value}”.`, 'error');
+      } else {
+        setStatus('Pasted.', 'ok');
+      }
+    },
+  });
+}
+for (const form of ui.bulkForms) {
+  form.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    fillFromList(form);
+  });
+}
+for (const radio of ui.firstSide) {
+  radio.addEventListener('change', () => {
+    const { rows, conv } = store.get();
+    replaceRows(applyReadings(assignSides(rows, radio.value), conv));
+  });
+}
 
 ui.rimBrand.addEventListener('change', () => renderPicker(ui.rimBrand, ui.rimModel, store.get().library.rims, {
   selectedId: store.get().wheel.rim_component_id, brand: ui.rimBrand.value, label: rimLabel,
@@ -278,11 +353,19 @@ ui.deleteBtn.addEventListener('click', deleteWheel);
 ui.wheelSelect.addEventListener('change', () => guarded(() => selectWheel(Number(ui.wheelSelect.value))));
 ui.solveBtn.addEventListener('click', solve);
 ui.sessionSelect.addEventListener('change', loadSession);
-ui.clearBtn.addEventListener('click', () => replaceRows(resizeRows([], store.get().wheel.spokes_count)));
+ui.clearBtn.addEventListener('click', () => {
+  const { rows, wheel } = store.get();
+  replaceRows(assignSides(resizeRows([], wheel.spokes_count), firstSide(rows)));
+});
 
 fillForm(ui.form, DEFAULT_WHEEL);
 guarded(async () => {
   const [rims, hubs, tensiometers] = await Promise.all([api.listRims(), api.listHubs(), api.listTensiometers()]);
   store.set({ library: { rims, hubs, tensiometers } });
-  await refreshWheels();
+  const saved = loadState(storage);
+  await refreshWheels(saved ? saved.wheel.id ?? 0 : undefined);
+  if (saved) {
+    restore(saved);
+  }
+  persisting = true;
 });

@@ -56,7 +56,17 @@
           <label class="field">Spoke type
             <select name="spoke_type"><option>J-Bend</option><option>Straightpull</option></select>
           </label>
-          <label class="field">Rim max tension, kgf <input name="max_tension_kgf" type="number" step="1" min="0" title="0 = no warning"></label>
+          <label class="field check"><input type="checkbox" name="paired_spokes">
+            <span title="Straight-pull hubs that seat spokes in pairs (Newmen Fade SP, DT 240 SP…): the pair offset adds 360/N° to the crossing angle">Paired SP heads</span></label>
+          <label class="field">Rim max tension, kgf <input name="max_tension_kgf" type="number" step="1" min="0" title="Hard cap for the solver; 0 = none"></label>
+          <label class="field">Desired max tension <input name="tension_limit" type="number" step="0.01" min="0"
+            title="The solver never plans a spoke above this; 0 = no limit. The lower of this and the rim max applies."></label>
+          <label class="field">Limit unit
+            <select name="tension_limit_unit">
+              <option value="kgf">kgf</option>
+              <option value="reading">Tensiometer reading (e.g. TC-02 mm)</option>
+            </select>
+          </label>
           <label class="field wide">Tensiometer <select name="tensiometer"></select></label>
           <label class="field">Gauge L (rotor) <select name="spoke_gauge_left"></select></label>
           <label class="field">Gauge R (drive) <select name="spoke_gauge_right"></select></label>
@@ -90,23 +100,67 @@
       <h2 id="grid-title">2. Measurements</h2>
       <p class="muted hint">Deviation sign: lateral + toward the right (drive) flange, radial + = high spot (hop).
         Tension 0/empty = not measured. Tick “peak →” when the peak lies between this spoke and the next.
-        Paste from Excel: click a cell and press Ctrl+V.</p>
+        Paste from Excel: click a cell and press Ctrl+V. Fill a whole column at once with a list such as
+        [3.15,3.16,3.05] (values go to the side's spokes in order; use ; to separate decimal-comma values).</p>
       <div class="actions-row">
         <button type="button" id="solve" class="primary">Solve</button>
         <button type="button" id="clear">Clear grid</button>
         <select id="session-select" aria-label="Saved sessions"></select>
       </div>
-      <div class="table-wrap">
-        <table id="grid">
-          <thead>
-            <tr>
-              <th scope="col">#</th><th scope="col">Side</th><th scope="col" id="tension-head">Tension, kgf</th>
-              <th scope="col">Lateral, mm</th><th scope="col" title="Lateral peak between this and next spoke">peak →</th>
-              <th scope="col">Radial, mm</th><th scope="col" title="Radial peak between this and next spoke">peak →</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+      <fieldset class="toggle" id="first-side">
+        <legend>Spoke #1 is on</legend>
+        <label><input type="radio" name="first_side" value="L"><span>Left (rotor)</span></label>
+        <label><input type="radio" name="first_side" value="R"><span>Right</span></label>
+      </fieldset>
+      <div class="grid-split">
+        <div class="grid-side" data-side="L">
+          <h3>Left side — rotor</h3>
+          <form class="bulk" data-side="L" autocomplete="off">
+            <input name="values" placeholder="[3.15,3.16,3.05,…]" aria-label="Left side — rotor — list of values">
+            <select name="column" aria-label="Left side — rotor — column to fill">
+              <option value="tension">Tension / reading</option>
+              <option value="lateral_dev_mm">Lateral, mm</option>
+              <option value="radial_dev_mm">Radial, mm</option>
+            </select>
+            <button type="submit">Fill</button>
+          </form>
+          <div class="table-wrap">
+            <table class="grid" id="grid-left">
+              <thead>
+                <tr>
+                  <th scope="col">#</th><th scope="col" class="tension-head">Tension, kgf</th>
+                  <th scope="col">Lateral, mm</th><th scope="col" title="Lateral peak between this and next spoke">peak →</th>
+                  <th scope="col">Radial, mm</th><th scope="col" title="Radial peak between this and next spoke">peak →</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="grid-side" data-side="R">
+          <h3>Right side</h3>
+          <form class="bulk" data-side="R" autocomplete="off">
+            <input name="values" placeholder="[3.15,3.16,3.05,…]" aria-label="Right side — list of values">
+            <select name="column" aria-label="Right side — column to fill">
+              <option value="tension">Tension / reading</option>
+              <option value="lateral_dev_mm">Lateral, mm</option>
+              <option value="radial_dev_mm">Radial, mm</option>
+            </select>
+            <button type="submit">Fill</button>
+          </form>
+          <div class="table-wrap">
+            <table class="grid" id="grid-right">
+              <thead>
+                <tr>
+                  <th scope="col">#</th><th scope="col" class="tension-head">Tension, kgf</th>
+                  <th scope="col">Lateral, mm</th><th scope="col" title="Lateral peak between this and next spoke">peak →</th>
+                  <th scope="col">Radial, mm</th><th scope="col" title="Radial peak between this and next spoke">peak →</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </section>
 

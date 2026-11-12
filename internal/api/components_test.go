@@ -143,7 +143,19 @@ func TestGeometryEndpoint(t *testing.T) {
 		t.Fatalf("geometry = %+v", g)
 	}
 
+	// Paired straight-pull seats (the user's 3x build): θ = 3·720/28 + 360/28 = 90°.
+	paired := w
+	paired.CrossPattern, paired.PairedSpokes = 3, true
+	rec = do(t, h, http.MethodPost, "/api/geometry", paired)
+	expectStatus(t, rec, http.StatusOK)
+	pg := decodeBody[struct{ Left, Right side }](t, rec)
+	if math.Abs(pg.Left.SpokeLengthMM-303.006) > 1e-3 || math.Abs(pg.Right.SpokeLengthMM-303.525) > 1e-3 {
+		t.Fatalf("paired 3x lengths = %v / %v, want 303.006 / 303.525", pg.Left.SpokeLengthMM, pg.Right.SpokeLengthMM)
+	}
 	bad := w
+	bad.PairedSpokes, bad.SpokeType = true, model.SpokeJBend
+	expectStatus(t, do(t, h, http.MethodPost, "/api/geometry", bad), http.StatusBadRequest)
+	bad = w
 	bad.SpokeType = "bladed"
 	expectStatus(t, do(t, h, http.MethodPost, "/api/geometry", bad), http.StatusBadRequest)
 	bad = w
@@ -245,7 +257,7 @@ func TestTensionWarnings(t *testing.T) {
 		for _, a := range res.Actions {
 			want := tc.maxKgf > 0 && a.PredictedTensionKgf >= 0.95*tc.maxKgf
 			warned = warned || a.TensionWarning
-			if a.TensionWarning != want || !(a.PredictedTensionKgf > 90) {
+			if a.TensionWarning != want || !(a.PredictedTensionKgf > 0) {
 				t.Errorf("max %v: action %+v", tc.maxKgf, a)
 			}
 		}
@@ -255,6 +267,10 @@ func TestTensionWarnings(t *testing.T) {
 		for _, p := range res.Predicted {
 			if p.TensionWarning != (tc.maxKgf > 0 && p.TensionKgf >= 0.95*tc.maxKgf) {
 				t.Errorf("max %v: predicted %+v", tc.maxKgf, p)
+			}
+			// The rim maximum is also enforced as a hard cap.
+			if tc.maxKgf > 0 && p.TensionKgf > tc.maxKgf+1e-6 {
+				t.Errorf("max %v: predicted %+v over the rim limit", tc.maxKgf, p)
 			}
 		}
 	}
@@ -282,4 +298,89 @@ func equalInts(a, b []int) bool {
 		}
 	}
 	return true
+}
+
+func TestTensionLimit(t *testing.T) {
+	h := newServer(t)
+	type result struct {
+		LimitLeft  float64 `json:"tension_limit_left_kgf"`
+		LimitRight float64 `json:"tension_limit_right_kgf"`
+		Predicted  []struct {
+			Side       string  `json:"side"`
+			TensionKgf float64 `json:"tension_kgf"`
+		} `json:"predicted"`
+	}
+	tc02 := func(g string, reading float64) float64 {
+		gauge, err := tensiometer.Lookup("ztto-tc-02", g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		kgf, err := gauge.Kgf(reading)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return kgf
+	}
+	withReadingLimit := func(reading float64) model.WheelSetup {
+		w := validWheel()
+		w.Tensiometer, w.SpokeGaugeLeft, w.SpokeGaugeRight = "ztto-tc-02", "2.0-1.8-2.0", "1.8"
+		w.TensionLimit, w.TensionLimitUnit = reading, "Reading"
+		return w
+	}
+	kgfLimit := validWheel()
+	kgfLimit.TensionLimit = 108
+	tests := []struct {
+		name        string
+		wheel       model.WheelSetup
+		left, right float64
+	}{
+		{"no limit", validWheel(), 0, 0},
+		{"desired limit in kgf", kgfLimit, 108, 108},
+		{"TC-02 reading per side gauge", withReadingLimit(2.85), tc02("2.0-1.8-2.0", 2.85), tc02("1.8", 2.85)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := do(t, h, http.MethodPost, "/api/solve", map[string]any{"wheel": tc.wheel, "measurements": measurements(32)})
+			expectStatus(t, rec, http.StatusOK)
+			res := decodeBody[result](t, rec)
+			if res.LimitLeft != tc.left || res.LimitRight != tc.right {
+				t.Fatalf("limits = %v / %v, want %v / %v", res.LimitLeft, res.LimitRight, tc.left, tc.right)
+			}
+			for _, p := range res.Predicted {
+				limit := map[string]float64{"L": tc.left, "R": tc.right}[p.Side]
+				if limit > 0 && p.TensionKgf > limit+1e-6 {
+					t.Fatalf("predicted %+v over the %v kgf limit", p, limit)
+				}
+			}
+		})
+	}
+
+	// The limit is stored with the profile and enforced on stored sessions.
+	rec := do(t, h, http.MethodPost, "/api/wheels", withReadingLimit(2.85))
+	expectStatus(t, rec, http.StatusCreated)
+	if w := decodeBody[model.WheelSetup](t, rec); w.TensionLimit != 2.85 || w.TensionLimitUnit != model.LimitUnitReading {
+		t.Fatalf("stored limit = %v %q", w.TensionLimit, w.TensionLimitUnit)
+	}
+
+	for name, tc := range map[string]struct {
+		wheel model.WheelSetup
+		field string
+	}{
+		"reading outside the gauge table": {withReadingLimit(9), "tension_limit"},
+		"reading without tensiometer": {func() model.WheelSetup {
+			w := validWheel()
+			w.TensionLimit, w.TensionLimitUnit = 2.8, model.LimitUnitReading
+			return w
+		}(), "tension_limit_unit"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, path := range []string{"/api/wheels", "/api/geometry"} {
+				rec := do(t, h, http.MethodPost, path, tc.wheel)
+				expectStatus(t, rec, http.StatusBadRequest)
+				if body := decodeBody[map[string]string](t, rec); body["field"] != tc.field {
+					t.Errorf("%s: body = %v, want field %s", path, body, tc.field)
+				}
+			}
+		})
+	}
 }

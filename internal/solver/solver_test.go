@@ -131,6 +131,91 @@ func TestSolveBalancesTension(t *testing.T) {
 	}
 }
 
+func TestSolveTensionLimit(t *testing.T) {
+	// Spoke 5 is loose and lateral runout asks for tightening; the left limit
+	// sits below the balanced tension, so every measured left spoke must end
+	// at or under it while right spokes are free.
+	tests := []struct {
+		name        string
+		left, right float64
+		binding     bool
+	}{
+		{"no limit", 0, 0, false},
+		{"loose limit is inactive", 200, 200, false},
+		{"left limit below the measured tension", 95, 0, true},
+		{"both sides limited", 95, 128, true},
+	}
+	base := func() []Measurement {
+		w := testWheel(32, 3)
+		ms := mockDataset(t, w, map[int]float64{5: 1, 12: 0.5}, 100)
+		for i := range ms {
+			if ms[i].Side == Right {
+				ms[i].TensionKgf += 30
+			}
+		}
+		ms[30].TensionKgf = 0 // unmeasured spokes are never limited
+		return ms
+	}
+	free, err := Solve(testWheel(32, 3), base(), DefaultParams())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := testWheel(32, 3)
+			w.TensionLimitLeftKgf, w.TensionLimitRightKgf = tc.left, tc.right
+			res, err := Solve(w, base(), DefaultParams())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, s := range res.Predicted {
+				if limit := w.tensionLimit(s.Side); limit > 0 && s.TensionKgf > limit+limitTolKgf {
+					t.Fatalf("spoke %d predicted %.2f kgf over the %v limit %.0f", s.Index, s.TensionKgf, s.Side, limit)
+				}
+			}
+			same := true
+			for j := range res.Turns {
+				same = same && res.Turns[j] == free.Turns[j]
+			}
+			if same == tc.binding {
+				t.Fatalf("binding=%v but turns %v vs unlimited %v", tc.binding, res.Turns, free.Turns)
+			}
+			if res.Predicted[30].TensionKgf != 0 {
+				t.Fatalf("unmeasured spoke predicted %v kgf", res.Predicted[30].TensionKgf)
+			}
+		})
+	}
+}
+
+func TestCapTurn(t *testing.T) {
+	pr := problem{n: 2, a: NewMatrix(2, 2), e0: make([]float64, 2), ms: []Measurement{{TensionKgf: 100}, {TensionKgf: 100}}}
+	pr.a.Set(0, 0, 10) // 10 kgf per turn on spoke 1
+	caps := []float64{103, 0}
+	tests := []struct {
+		name   string
+		k      int
+		raw, q float64
+		want   float64
+	}{
+		{"rounding up over the cap steps down", 0, 0.2, 0.5, 0.25},
+		{"rounding up under the cap is kept", 0, 0.05, 0.25, 0.25},
+		{"rounding down still over the cap steps further", 0, 0.6, 0.5, 0.25},
+		{"uncapped spoke", 1, 0.2, 0.5, 0.5},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			x := []float64{0, 0}
+			x[tc.k] = tc.raw
+			if got := pr.capTurn(caps, x, tc.k, tc.q, 0.25); got != tc.want {
+				t.Fatalf("capTurn = %v, want %v", got, tc.want)
+			}
+			if x[tc.k] != tc.raw {
+				t.Fatal("capTurn must not modify x")
+			}
+		})
+	}
+}
+
 func TestSolveGeometryDominatesTensionOutlier(t *testing.T) {
 	w := Wheel{SpokeCount: 32, ERDMM: 600, Cross: 3, FlangeLeftMM: 35, FlangeRightMM: 20, Direction: CounterClockwise, ViewFrom: Left}
 	ms := alternating(32, 100)
