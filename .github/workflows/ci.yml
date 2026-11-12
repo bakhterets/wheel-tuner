@@ -66,9 +66,10 @@ jobs:
         if: always()
         run: docker compose down -v
 
-  # Publishes the images to quay.io on every push to main (i.e. after a merge);
-  # other branches and pull requests only build them.
+  # Branches and pull requests: build the images only. This job never sees
+  # registry credentials.
   images:
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     needs: smoke
     runs-on: ubuntu-latest
     strategy:
@@ -80,14 +81,39 @@ jobs:
           - image: wheel-tuner-web
             context: web
             file: web/Dockerfile
-    env:
-      PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - name: log in to quay.io
-        if: env.PUBLISH == 'true'
-        uses: docker/login-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.image }}
+
+  # Push to main (i.e. after a merge): build and publish to quay.io. The
+  # credentials live in the protected "quay" environment, which only main may
+  # use, so other branches, pull requests and forks cannot read them.
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: smoke
+    runs-on: ubuntu-latest
+    environment: quay
+    strategy:
+      matrix:
+        include:
+          - image: wheel-tuner-api
+            context: .
+            file: Dockerfile
+          - image: wheel-tuner-web
+            context: web
+            file: web/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: quay.io
           username: ${{ secrets.QUAY_USERNAME }}
@@ -103,7 +129,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
-          push: ${{ env.PUBLISH == 'true' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}

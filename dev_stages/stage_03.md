@@ -18,7 +18,7 @@ Handoff document for agents continuing development. Read [stage_01.md](stage_01.
 | Bulk input of a list `[3.15,3.16,3.05,…]` instead of typing every cell | `web/static/js/bulk.js` (`parseList`, `applyList`), one `form.bulk` per side |
 | Page reload must keep the cache and the calculation state | `web/static/js/persist.js` (`localStorage`), `main.js` restore/subscribe |
 | Frontend and backend as independent containerised microservices | `Dockerfile` (api), `web/Dockerfile` + `web/nginx/default.conf.template` (web), `docker-compose.yml`, `-web=false` flag |
-| GitHub Actions CI; images pushed to quay.io on merge to `main` | `.github/workflows/ci.yml` jobs `smoke` and `images` |
+| GitHub Actions CI; images pushed to quay.io on merge to `main` | `.github/workflows/ci.yml` jobs `smoke`, `images` and `publish` |
 | Desired tension limit in kgf **or** in TC‑02 mm scale | `WheelSetup.tension_limit` + `tension_limit_unit`, `model.TensionLimitsKgf`, solver caps (`limitSystem`, `capTurn`, `enforceLimits`) |
 
 ## 2. Decisions
@@ -34,7 +34,7 @@ Made autonomously (autopilot); revisit freely if the user disagrees.
 7. **Persistence** in `localStorage` under `wheel-tuner:state` (version 1): wheel form, rows and the last result. Written on every change, but only **after** the initial restore finished (`persisting` flag), so a failed load never overwrites saved state. `loadState` validates and sanitises rows (`restoreRow`) and drops a malformed result. If the saved profile id no longer exists, the form falls back to a new profile with the saved values.
 8. **Microservices.** The same Go binary serves API only with `-web=false`. The web image is plain nginx serving the static files and reverse-proxying `/api/` and `/healthz` to `BACKEND_URL`, so the browser stays same-origin (no CORS, the CSP is unchanged). The single-binary mode with the embedded UI is kept for local use.
 9. **Images:** api = `golang:1.25-bookworm` builder, `CGO_ENABLED=0`, runtime `gcr.io/distroless/static-debian12:nonroot` (uid 65532), volume `/data`. web = `nginxinc/nginx-unprivileged:1.27-alpine`, port 8080. No Docker `HEALTHCHECK` (distroless has no shell); use orchestrator `httpGet` probes.
-10. **CI publishing.** Images are built on every run (catching Dockerfile breakage in PRs) but pushed only on `push` to `main`. Tags: `sha-<short>` and `latest` (default branch). Registry namespace: repo variable `QUAY_NAMESPACE`, else the GitHub owner.
+10. **CI publishing.** Images are built on every run, so Dockerfile breakage shows up in PRs. The `images` job (branches and PRs) only builds and has no credentials. The `publish` job runs only on a push to `main` and uses the protected GitHub environment `quay`, whose deployment-branch rule allows `main` only. The repo is public, so the quay.io credentials are environment secrets: no other branch, PR or fork can read them. Tags: `sha-<short>` and `latest`. Registry namespace: variable `QUAY_NAMESPACE`, else the GitHub owner.
 
 ## 3. Data notes for the user's build
 
@@ -110,10 +110,16 @@ JS tests: `bulk_persist.test.mjs` (new); `render.test.mjs`, `library.test.mjs`, 
 | `web/nginx/default.conf.template` | listen 8080; security headers on `/`; `/api/` and `= /healthz` → `${BACKEND_URL}`; `= /livez` → 200. `BACKEND_URL` must have **no trailing slash** (URI passed through unchanged). envsubst only replaces defined variables, so `$host` etc. survive |
 | `docker-compose.yml` | `api` (volume `wheel-data`) + `web` (port 8080); images `quay.io/${QUAY_NAMESPACE:-bakhterets}/wheel-tuner-{api,web}:${TAG:-latest}` |
 | `.dockerignore`, `web/.dockerignore` | keep contexts small (no tests, DBs, `.git`) |
-| `.github/workflows/ci.yml` | `go`, `web`, then `smoke` (compose up + curl probes through the proxy), then `images` (matrix, push on `main` only) |
+| `.github/workflows/ci.yml` | `go`, `web`, then `smoke` (compose up + curl probes through the proxy), then `images` (build only, branches/PRs) or `publish` (push on `main`, environment `quay`) |
 | `Makefile` | `run-api`, `images`, `compose-up`, `compose-down` |
 
-**Repository setup needed once** (Settings → Secrets and variables → Actions): secrets `QUAY_USERNAME` (robot account, e.g. `bakhterets+github_ci`) and `QUAY_PASSWORD` (robot token); optional variable `QUAY_NAMESPACE`. Create `wheel-tuner-api` and `wheel-tuner-web` on quay.io and grant the robot *Write*.
+**Repository setup needed once:**
+
+1. On quay.io, create `wheel-tuner-api` and `wheel-tuner-web` as empty repositories, with no Dockerfile or GitHub build trigger.
+2. Create a robot account with *Write* on those two repositories only.
+3. In GitHub, create the environment `quay` (Settings → Environments). Set *Deployment branches* to `main` only; required reviewers are optional.
+4. In that environment, add the secrets `QUAY_USERNAME` (e.g. `bakhterets+github_ci`) and `QUAY_PASSWORD` (the robot token), plus the optional variable `QUAY_NAMESPACE`.
+5. Do not add these as repository secrets.
 
 ## 5. Quality gates
 

@@ -49,17 +49,25 @@ docker compose down
 1. `go` — gofmt, vet, golangci-lint, `go test -race` with coverage.
 2. `web` — JS tests with coverage.
 3. `smoke` — `docker compose up --build`, then checks `/livez`, `/healthz`, `/`, `/api/tensiometers` and `/api/components/hubs` through the web proxy.
-4. `images` — builds both images (matrix `api`, `web`) with the GHA layer cache. They are **pushed only on a push to `main`** (i.e. after a merge) to `quay.io/<namespace>/wheel-tuner-{api,web}` with tags `sha-<short>` and `latest`. Pull requests only build.
+4. `images` (branches and pull requests) — builds both images (matrix `api`, `web`) without pushing. It has no access to registry credentials.
+5. `publish` (push to `main` only, i.e. after a merge) — builds and pushes `quay.io/<namespace>/wheel-tuner-{api,web}` with tags `sha-<short>` and `latest`. It runs in the protected `quay` environment.
 
-Repository setup (Settings → Secrets and variables → Actions):
+Repository setup. The repo is public, so the credentials are **environment secrets**, not repository secrets:
+
+1. On quay.io, create the empty repositories `wheel-tuner-api` and `wheel-tuner-web` and a robot account with *Write* on both, and nothing else.
+2. In GitHub, go to Settings → Environments → **New environment** and name it `quay`.
+3. Under **Deployment branches and tags**, choose *Selected branches and tags* and add `main`. No other branch, pull request or fork can then use the environment or its secrets. Optionally, *Required reviewers* adds a manual approval before every push.
+4. In the `quay` environment, add these:
 
 | Kind | Name | Value |
 |------|------|-------|
-| Secret | `QUAY_USERNAME` | quay.io robot account, e.g. `bakhterets+github_ci` |
-| Secret | `QUAY_PASSWORD` | robot account token |
+| Environment secret | `QUAY_USERNAME` | robot account, e.g. `bakhterets+github_ci` |
+| Environment secret | `QUAY_PASSWORD` | robot account token |
 | Variable (optional) | `QUAY_NAMESPACE` | quay.io organisation/user; defaults to the GitHub owner |
 
-Create both repositories (`wheel-tuner-api`, `wheel-tuner-web`) on quay.io and give the robot account *Write* permission on them.
+5. Recommended: protect `main` (Settings → Rules → require a pull request and passing checks). Then only reviewed code reaches the job that holds the secrets.
+
+GitHub never passes secrets to workflows triggered by pull requests from forks, and masks them in logs. The workflow does not use `pull_request_target`; keep it that way.
 
 ## Development
 
