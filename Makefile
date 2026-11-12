@@ -1,4 +1,4 @@
-.PHONY: all build run test test-go test-web cover lint fmt
+.PHONY: all build run run-api test test-go test-web cover lint fmt images compose-up compose-down podman-up podman-down
 
 all: lint test build
 
@@ -8,13 +8,16 @@ build:
 run:
 	go run ./cmd/wheel-tuner -addr :8080 -db wheel-tuner.db
 
+run-api:
+	go run ./cmd/wheel-tuner -addr :8081 -db wheel-tuner.db -web=false
+
 test: test-go test-web
 
 test-go:
 	go test -race ./...
 
 test-web:
-	cd web && node --test --experimental-test-coverage test/
+	cd web && node --test --experimental-test-coverage 'test/*.test.mjs'
 
 cover:
 	go test -coverprofile=coverage.out ./...
@@ -26,3 +29,19 @@ lint:
 fmt:
 	gofmt -w .
 	golangci-lint fmt ./...
+
+images:
+	docker build -t wheel-tuner-api .
+	docker build -t wheel-tuner-web web
+
+compose-up:
+	docker compose up -d --build
+
+compose-down:
+	docker compose down
+
+podman-up:
+	sh scripts/podman.sh up
+
+podman-down:
+	sh scripts/podman.sh down

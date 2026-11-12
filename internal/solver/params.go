@@ -12,14 +12,17 @@ type Weights struct {
 
 // Params are the empirical model constants. Use DefaultParams as a baseline.
 type Params struct {
-	ThreadPitchMM     float64 // spoke shortening per full nipple turn
-	TensionPerTurnKgf float64 // tension gained by a spoke per full turn
-	LateralCompliance float64 // share of geometric lateral travel realised at the rim
-	RadialCompliance  float64 // share of geometric radial travel realised at the rim
+	ThreadPitchMM float64 // spoke shortening per full nipple turn
+	// SpokeRigidityKgf is the effective axial rigidity E·A of a spoke (kgf),
+	// reduced for rim compression and spoke wind-up. Hooke's law gives the
+	// tension gained per turn: SpokeRigidityKgf·ThreadPitchMM/length.
+	SpokeRigidityKgf  float64
+	LateralCompliance float64 // rim lateral travel per kgf of lateral spoke force (mm/kgf)
+	RadialCompliance  float64 // rim radial travel per kgf of radial spoke force (mm/kgf)
 	LateralDecayMM    float64 // rim arc length over which lateral influence decays by 1/e
 	RadialDecayMM     float64 // rim arc length over which radial influence decays by 1/e
-	NeighborCoupling  float64 // tension transferred to nearby spokes, fraction of TensionPerTurnKgf
-	CrossTalk         float64 // tension transferred to each crossing spoke, fraction of TensionPerTurnKgf
+	NeighborCoupling  float64 // tension transferred to nearby spokes, fraction of the turned spoke's gain
+	CrossTalk         float64 // tension transferred to each crossing spoke, fraction of the turned spoke's gain
 	TurnStep          float64 // smallest practical nipple turn
 	MinTurn           float64 // adjustments below this are dropped
 	Tolerance         float64 // relative residual tolerance of the linear solver
@@ -30,10 +33,14 @@ type Params struct {
 // DefaultParams returns constants tuned for typical steel spokes and alloy rims.
 func DefaultParams() Params {
 	return Params{
-		ThreadPitchMM:     0.45, // 56 TPI
-		TensionPerTurnKgf: 25,
-		LateralCompliance: 0.25,
-		RadialCompliance:  0.5,
+		ThreadPitchMM: 0.45, // 56 TPI
+		// ≈25 kgf per turn on a 290 mm spoke (the stage-01 calibration).
+		SpokeRigidityKgf: 16000,
+		// The rim is far stiffer radially than laterally. On a 32h/ERD 600
+		// wheel a quarter turn moves the rim ≈0.1–0.2 mm sideways (more on
+		// the wider-braced flange) and ≈0.07 mm radially.
+		LateralCompliance: 0.3,
+		RadialCompliance:  0.012,
 		// Lateral rim bending spreads over ≈2 spoke spacings, radial over ≈1
 		// (values for a 32h rim with ERD ≈ 600 mm).
 		LateralDecayMM:   120,
@@ -61,7 +68,7 @@ func (p Params) Validate() error {
 		v    float64
 	}{
 		{"thread pitch", p.ThreadPitchMM},
-		{"tension per turn", p.TensionPerTurnKgf},
+		{"spoke rigidity", p.SpokeRigidityKgf},
 		{"lateral compliance", p.LateralCompliance},
 		{"radial compliance", p.RadialCompliance},
 		{"lateral decay", p.LateralDecayMM},

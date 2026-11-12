@@ -44,6 +44,7 @@ func Solve(w Wheel, ms []Measurement, p Params) (*Result, error) {
 		return nil, err
 	}
 	pr := newProblem(inf, sorted, p)
+	pr.wheel = w
 	raw, turns, iters, err := pr.optimize(p)
 	if err != nil {
 		return nil, err
@@ -67,8 +68,10 @@ func Solve(w Wheel, ms []Measurement, p Params) (*Result, error) {
 // problem is the stacked weighted least-squares system e0 + A·x → 0.
 type problem struct {
 	n                int
+	wheel            Wheel
 	ms               []Measurement
 	a                *Matrix
+	tension          *Matrix // uncentered ΔT per turn: absolute tensions and caps
 	w                []float64
 	e0               []float64
 	latRows, radRows int
@@ -105,7 +108,8 @@ func newProblem(inf *Influence, ms []Measurement, p Params) problem {
 	return problem{
 		n:           n,
 		ms:          ms,
-		a:           stack(inf.Lateral, rad, inf.Tension),
+		a:           stack(inf.Lateral, rad, centerTension(inf.Tension, ms)),
+		tension:     inf.Tension,
 		w:           w,
 		e0:          e0,
 		latRows:     latRows,
@@ -116,7 +120,9 @@ func newProblem(inf *Influence, ms []Measurement, p Params) problem {
 }
 
 // deviationErrors maps entered values onto matrix rows. A flagged value is
-// the peak at i+0.5; the spoke-i row then takes the mean of its neighbours.
+// the peak at i+0.5; the spoke-i row is then interpolated linearly between
+// the previous sample (at i-1, or at i-0.5 when that one is flagged too) and
+// the peak.
 func deviationErrors(vals []float64, flags []bool) []float64 {
 	n := len(vals)
 	out := make([]float64, 0, n)
@@ -125,8 +131,12 @@ func deviationErrors(vals []float64, flags []bool) []float64 {
 			out = append(out, v)
 			continue
 		}
-		prev, next := vals[(i-1+n)%n], vals[(i+1)%n]
-		out = append(out, (prev+next)/2, v)
+		p := (i - 1 + n) % n
+		at := (vals[p] + 2*v) / 3
+		if flags[p] {
+			at = (vals[p] + v) / 2
+		}
+		out = append(out, at, v)
 	}
 	return out
 }
@@ -173,6 +183,24 @@ func centerRadial(m *Matrix, pts []Point, e []float64) *Matrix {
 	return out
 }
 
+// centerTension subtracts, per column, the side mean over measured spokes
+// from each measured row, so the tension rows measure deviation from the
+// post-adjustment side mean: uniformly tightening one side costs nothing.
+// Unmeasured rows carry zero weight and are left zero.
+func centerTension(m *Matrix, ms []Measurement) *Matrix {
+	rows, cols := m.Dims()
+	out := NewMatrix(rows, cols)
+	for j := range cols {
+		means := sideMeans(ms, func(i int) float64 { return m.At(i, j) })
+		for i, s := range ms {
+			if s.TensionKgf > 0 {
+				out.Set(i, j, m.At(i, j)-means[s.Side])
+			}
+		}
+	}
+	return out
+}
+
 // tensionErrors returns the deviation of each spoke from its side's mean
 // tension and the row weights; unmeasured spokes get zero weight.
 func tensionErrors(ms []Measurement, weight float64) (e, w []float64) {
@@ -205,15 +233,84 @@ func sideMeans(ms []Measurement, value func(i int) float64) map[Side]float64 {
 	return means
 }
 
-func (pr problem) optimize(p Params) (raw, turns []float64, iterations int, err error) {
-	s := leastSquares{
-		a: pr.a, w: pr.w, b: negate(pr.e0),
-		ridge: p.Weights.Turns, tol: p.Tolerance, maxIter: p.MaxIterations,
+// limitWeight (per kgf²) penalises predicted tension above a side limit. One
+// kgf over the limit costs as much as 1 mm of lateral runout, while a turn
+// changes tension by ≈15 kgf, so active limits hold to a fraction of a kgf.
+const limitWeight = 1.0
+
+// limitTolKgf is the overshoot that activates a tension limit row.
+const limitTolKgf = 1e-6
+
+// limitRows returns, per spoke, the tension cap enforced by a penalty row; 0
+// means no cap (no side limit or the tension was not measured).
+func (pr problem) limitRows() []float64 {
+	caps := make([]float64, pr.n)
+	for i, m := range pr.ms {
+		if m.TensionKgf > 0 {
+			caps[i] = pr.wheel.tensionLimit(m.Side)
+		}
 	}
+	return caps
+}
+
+// limitSystem appends one zero-weight row per spoke to the least-squares
+// system: T_i + ΔT_i(x) → cap_i. Rows get weight limitWeight once active.
+func (pr problem) limitSystem(p Params) (leastSquares, []float64) {
+	caps := pr.limitRows()
+	rows := pr.a.rows + pr.n
+	a := NewMatrix(rows, pr.n)
+	copy(a.data, pr.a.data)
+	copy(a.data[pr.a.rows*pr.n:], pr.tension.data)
+	b := append(negate(pr.e0), make([]float64, pr.n)...)
+	for i, c := range caps {
+		b[pr.a.rows+i] = c - pr.ms[i].TensionKgf
+	}
+	w := append(append([]float64(nil), pr.w...), make([]float64, pr.n)...)
+	return leastSquares{a: a, w: w, b: b, ridge: p.Weights.Turns, tol: p.Tolerance, maxIter: p.MaxIterations}, caps
+}
+
+// updateLimits keeps the penalty rows on exactly the binding caps: a row is
+// activated when its spoke is predicted above the cap and dropped once the
+// spoke sits below it, where the two-sided penalty would pull the tension up
+// towards the cap. It reports whether the active set changed.
+func (pr problem) updateLimits(s leastSquares, caps, x []float64) bool {
+	tension := pr.tensionAfter(x)
+	changed := false
+	for i, c := range caps {
+		row := pr.a.rows + i
+		switch {
+		case c == 0:
+		case s.w[row] == 0 && tension[i] > c+limitTolKgf:
+			s.w[row] = limitWeight
+			changed = true
+		case s.w[row] != 0 && tension[i] < c-limitTolKgf:
+			s.w[row] = 0
+			changed = true
+		}
+	}
+	return changed
+}
+
+// solveLimited solves the free variables, re-solving while the set of active
+// tension limits changes. The pass bound guards against cycling; any cap left
+// exceeded is handled by enforceLimits.
+func (pr problem) solveLimited(s leastSquares, caps, x []float64, fixed []bool) error {
+	for pass := 1; ; pass++ {
+		if _, err := s.solve(x, fixed); err != nil {
+			return err
+		}
+		if !pr.updateLimits(s, caps, x) || pass > 2*pr.n {
+			return nil
+		}
+	}
+}
+
+func (pr problem) optimize(p Params) (raw, turns []float64, iterations int, err error) {
+	s, caps := pr.limitSystem(p)
 	x := make([]float64, pr.n)
 	fixed := make([]bool, pr.n)
 	for free := pr.n; free > 0; free-- {
-		if _, err := s.solve(x, fixed); err != nil {
+		if err := pr.solveLimited(s, caps, x, fixed); err != nil {
 			return nil, nil, iterations, err
 		}
 		iterations++
@@ -235,9 +332,51 @@ func (pr problem) optimize(p Params) (raw, turns []float64, iterations int, err 
 			}
 			break
 		}
-		x[k], fixed[k] = q, true
+		x[k], fixed[k] = pr.capTurn(caps, x, fixed, k, q, p.TurnStep), true
 	}
+	pr.enforceLimits(caps, x, p.TurnStep)
 	return raw, x, iterations, nil
+}
+
+// capTurn lowers a rounded turn by one step when it would leave spoke k
+// above its tension cap, or when rounding up pushes an already fixed spoke
+// over its cap through cross-talk, so the remaining spokes are re-optimised
+// around it.
+func (pr problem) capTurn(caps, x []float64, fixed []bool, k int, q, step float64) float64 {
+	cont := x[k]
+	x[k] = q
+	tension := pr.tensionAfter(x)
+	x[k] = cont
+	over := func(i int) bool { return caps[i] > 0 && tension[i] > caps[i]+limitTolKgf }
+	if over(k) {
+		return q - step
+	}
+	if q > cont {
+		for i := range fixed {
+			if fixed[i] && over(i) {
+				return q - step
+			}
+		}
+	}
+	return q
+}
+
+// enforceLimits loosens capped spokes that rounding (or turns skipped below
+// MinTurn) left above their cap. Cross-talk is weak, so a few passes settle.
+func (pr problem) enforceLimits(caps, x []float64, step float64) {
+	for range 4 * pr.n {
+		tension := pr.tensionAfter(x)
+		changed := false
+		for i, c := range caps {
+			if c > 0 && tension[i] > c+limitTolKgf {
+				x[i] -= step
+				changed = true
+			}
+		}
+		if !changed {
+			return
+		}
+	}
 }
 
 func negate(v []float64) []float64 {
@@ -280,11 +419,10 @@ func (pr problem) metrics(x []float64) Metrics {
 }
 
 func (pr problem) tensionAfter(x []float64) []float64 {
-	off := pr.latRows + pr.radRows
 	t := make([]float64, pr.n)
 	for i, m := range pr.ms {
 		if m.TensionKgf > 0 {
-			t[i] = m.TensionKgf + dot(pr.a.row(off+i), x)
+			t[i] = m.TensionKgf + dot(pr.tension.row(i), x)
 		}
 	}
 	return t

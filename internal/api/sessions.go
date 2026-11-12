@@ -17,13 +17,18 @@ type solveRequest struct {
 	Measurements []model.Measurement `json:"measurements"`
 }
 
+// tensionWarningRatio flags spokes predicted at ≥ 95 % of the rim limit.
+const tensionWarningRatio = 0.95
+
 type actionDTO struct {
-	Spoke       int     `json:"spoke_index"`
-	Side        string  `json:"side"`
-	Turns       float64 `json:"turns"`
-	Fraction    string  `json:"fraction"`
-	Direction   string  `json:"direction"`
-	Instruction string  `json:"instruction"`
+	Spoke               int     `json:"spoke_index"`
+	Side                string  `json:"side"`
+	Turns               float64 `json:"turns"`
+	Fraction            string  `json:"fraction"`
+	Direction           string  `json:"direction"`
+	Instruction         string  `json:"instruction"`
+	PredictedTensionKgf float64 `json:"predicted_tension_kgf"`
+	TensionWarning      bool    `json:"tension_warning"`
 }
 
 type metricsDTO struct {
@@ -35,23 +40,29 @@ type metricsDTO struct {
 }
 
 type spokeStateDTO struct {
-	Index        int     `json:"spoke_index"`
-	Side         string  `json:"side"`
-	TensionKgf   float64 `json:"tension_kgf"`
-	LateralDevMM float64 `json:"lateral_dev_mm"`
-	RadialDevMM  float64 `json:"radial_dev_mm"`
+	Index          int     `json:"spoke_index"`
+	Side           string  `json:"side"`
+	TensionKgf     float64 `json:"tension_kgf"`
+	LateralDevMM   float64 `json:"lateral_dev_mm"`
+	RadialDevMM    float64 `json:"radial_dev_mm"`
+	TensionWarning bool    `json:"tension_warning"`
 }
 
 type solveResponse struct {
-	SessionID   int64           `json:"session_id,omitempty"`
-	Orientation string          `json:"orientation"`
-	Actions     []actionDTO     `json:"actions"`
-	Turns       []float64       `json:"turns"`
-	RawTurns    []float64       `json:"raw_turns"`
-	Before      metricsDTO      `json:"before"`
-	After       metricsDTO      `json:"after"`
-	Predicted   []spokeStateDTO `json:"predicted"`
-	Iterations  int             `json:"iterations"`
+	SessionID     int64           `json:"session_id,omitempty"`
+	Orientation   string          `json:"orientation"`
+	Actions       []actionDTO     `json:"actions"`
+	Turns         []float64       `json:"turns"`
+	RawTurns      []float64       `json:"raw_turns"`
+	Before        metricsDTO      `json:"before"`
+	After         metricsDTO      `json:"after"`
+	Predicted     []spokeStateDTO `json:"predicted"`
+	Iterations    int             `json:"iterations"`
+	Geometry      geometryDTO     `json:"geometry"`
+	MaxTensionKgf float64         `json:"max_tension_kgf"`
+	// Effective per-side caps enforced by the solver (0 = none).
+	TensionLimitLeftKgf  float64 `json:"tension_limit_left_kgf"`
+	TensionLimitRightKgf float64 `json:"tension_limit_right_kgf"`
 }
 
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
@@ -81,6 +92,10 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	wheel, err := s.repo.GetWheel(r.Context(), id)
 	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if err := resolveInput(wheel, in.Measurements); err != nil {
 		s.fail(w, r, err)
 		return
 	}
@@ -158,7 +173,11 @@ func (s *Server) solve(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	if err := prepareWheel(&in.Wheel); err != nil {
+	if _, err := prepareWheel(&in.Wheel); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if err := resolveInput(in.Wheel, in.Measurements); err != nil {
 		s.fail(w, r, err)
 		return
 	}
@@ -170,15 +189,30 @@ func (s *Server) solve(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, r, http.StatusOK, resp)
 }
 
+// resolveInput converts the tensiometer readings of newly submitted
+// measurements to kgf in place. Stored sessions are not re-resolved: their
+// kgf values were fixed with the tensiometer settings at recording time.
+func resolveInput(wheel model.WheelSetup, ms []model.Measurement) error {
+	if _, err := checkInput(wheel, ms); err != nil {
+		return err
+	}
+	return model.ResolveTensions(wheel, ms)
+}
+
+// checkInput re-validates the (possibly stored) profile and the measurements.
+func checkInput(wheel model.WheelSetup, ms []model.Measurement) (solver.Wheel, error) {
+	sw, err := toSolverWheel(wheel)
+	if err != nil {
+		return sw, err
+	}
+	return sw, model.ValidateMeasurements(wheel.SpokesCount, ms)
+}
+
 func validateInput(wheel model.WheelSetup, ms []model.Measurement) (solver.Wheel, []solver.Measurement, error) {
-	// Stored profiles are re-validated: toSolverWheel relies on it.
-	if err := wheel.Validate(); err != nil {
+	sw, err := checkInput(wheel, ms)
+	if err != nil {
 		return solver.Wheel{}, nil, err
 	}
-	if err := model.ValidateMeasurements(wheel.SpokesCount, ms); err != nil {
-		return solver.Wheel{}, nil, err
-	}
-	sw := toSolverWheel(wheel)
 	sms := make([]solver.Measurement, len(ms))
 	for i, m := range ms {
 		sms[i] = solver.Measurement{
@@ -200,41 +234,57 @@ func (s *Server) run(wheel model.WheelSetup, ms []model.Measurement) (solveRespo
 	if err != nil {
 		return solveResponse{}, err
 	}
+	geo, err := solver.SpokeGeometry(sw, s.params)
+	if err != nil {
+		return solveResponse{}, err
+	}
 	res, err := solver.Solve(sw, sms, s.params)
 	if err != nil {
 		return solveResponse{}, err
 	}
+	warn := func(kgf float64) bool {
+		return wheel.MaxTensionKgf > 0 && kgf >= tensionWarningRatio*wheel.MaxTensionKgf
+	}
 	resp := solveResponse{
-		Orientation: wheel.OrientationHeader(),
-		Actions:     make([]actionDTO, len(res.Actions)),
-		Turns:       res.Turns,
-		RawTurns:    res.RawTurns,
-		Before:      toMetricsDTO(res.Before),
-		After:       toMetricsDTO(res.After),
-		Predicted:   make([]spokeStateDTO, len(res.Predicted)),
-		Iterations:  res.Iterations,
+		Orientation:          wheel.OrientationHeader(),
+		Actions:              make([]actionDTO, len(res.Actions)),
+		Turns:                res.Turns,
+		RawTurns:             res.RawTurns,
+		Before:               toMetricsDTO(res.Before),
+		After:                toMetricsDTO(res.After),
+		Predicted:            make([]spokeStateDTO, len(res.Predicted)),
+		Iterations:           res.Iterations,
+		Geometry:             toGeometryDTO(geo),
+		MaxTensionKgf:        wheel.MaxTensionKgf,
+		TensionLimitLeftKgf:  sw.TensionLimitLeftKgf,
+		TensionLimitRightKgf: sw.TensionLimitRightKgf,
 	}
 	for i, a := range res.Actions {
 		dir := "loosen"
 		if a.Tighten() {
 			dir = "tighten"
 		}
+		// Predicted is indexed by spoke; unmeasured tensions stay 0 and never warn.
+		kgf := res.Predicted[a.Spoke-1].TensionKgf
 		resp.Actions[i] = actionDTO{
-			Spoke:       a.Spoke,
-			Side:        a.Side.String(),
-			Turns:       a.Turns,
-			Fraction:    a.Fraction(),
-			Direction:   dir,
-			Instruction: a.Instruction(),
+			Spoke:               a.Spoke,
+			Side:                a.Side.String(),
+			Turns:               a.Turns,
+			Fraction:            a.Fraction(),
+			Direction:           dir,
+			Instruction:         a.Instruction(),
+			PredictedTensionKgf: kgf,
+			TensionWarning:      warn(kgf),
 		}
 	}
 	for i, p := range res.Predicted {
 		resp.Predicted[i] = spokeStateDTO{
-			Index:        p.Index,
-			Side:         p.Side.String(),
-			TensionKgf:   p.TensionKgf,
-			LateralDevMM: p.LateralMM,
-			RadialDevMM:  p.RadialMM,
+			Index:          p.Index,
+			Side:           p.Side.String(),
+			TensionKgf:     p.TensionKgf,
+			LateralDevMM:   p.LateralMM,
+			RadialDevMM:    p.RadialMM,
+			TensionWarning: warn(p.TensionKgf),
 		}
 	}
 	return resp, nil

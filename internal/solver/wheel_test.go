@@ -3,6 +3,7 @@ package solver
 import (
 	"errors"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -90,6 +91,34 @@ func TestParseDirection(t *testing.T) {
 	}
 }
 
+func TestParseSpokeType(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    SpokeType
+		wantErr bool
+	}{
+		{"J-Bend", JBend, false},
+		{"j-bend", JBend, false},
+		{"Straightpull", StraightPull, false},
+		{"STRAIGHTPULL", StraightPull, false},
+		{"", 0, true},
+		{"bladed", 0, true},
+	}
+	for _, tc := range tests {
+		got, err := ParseSpokeType(tc.in)
+		if tc.wantErr {
+			requireInvalid(t, err)
+			continue
+		}
+		if err != nil || got != tc.want || !strings.EqualFold(got.String(), tc.in) {
+			t.Errorf("ParseSpokeType(%q) = %v, %v", tc.in, got, err)
+		}
+	}
+	if got := SpokeType(7).String(); got != "SpokeType(7)" {
+		t.Errorf("unknown spoke type String() = %q", got)
+	}
+}
+
 func TestWheelValidate(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -111,6 +140,22 @@ func TestWheelValidate(t *testing.T) {
 		{"right flange beyond rim", func(w *Wheel) { w.FlangeRightMM = 300 }, false},
 		{"bad direction", func(w *Wheel) { w.Direction = 0 }, false},
 		{"bad view side", func(w *Wheel) { w.ViewFrom = 'X' }, false},
+		{"with flange diameters and offset", func(w *Wheel) {
+			w.FlangeDiamLeftMM, w.FlangeDiamRightMM, w.RimOffsetMM, w.SpokeType = 58, 46, 4, StraightPull
+		}, true},
+		{"negative flange diameter", func(w *Wheel) { w.FlangeDiamLeftMM = -1 }, false},
+		{"flange diameter reaches ERD/2", func(w *Wheel) { w.FlangeDiamRightMM = 300 }, false},
+		{"NaN flange diameter", func(w *Wheel) { w.FlangeDiamRightMM = math.NaN() }, false},
+		{"NaN rim offset", func(w *Wheel) { w.RimOffsetMM = math.NaN() }, false},
+		{"rim offset swallows left flange", func(w *Wheel) { w.RimOffsetMM = 35 }, false},
+		{"rim offset swallows right flange", func(w *Wheel) { w.RimOffsetMM = -20 }, false},
+		{"bad spoke type", func(w *Wheel) { w.SpokeType = 9 }, false},
+		{"paired straight-pull", func(w *Wheel) { w.SpokeType, w.PairedSpokes = StraightPull, true }, true},
+		{"paired J-bend", func(w *Wheel) { w.PairedSpokes = true }, false},
+		{"tension limits", func(w *Wheel) { w.TensionLimitLeftKgf, w.TensionLimitRightKgf = 120, 90 }, true},
+		{"negative tension limit", func(w *Wheel) { w.TensionLimitLeftKgf = -1 }, false},
+		{"NaN tension limit", func(w *Wheel) { w.TensionLimitRightKgf = math.NaN() }, false},
+		{"infinite tension limit", func(w *Wheel) { w.TensionLimitRightKgf = math.Inf(1) }, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

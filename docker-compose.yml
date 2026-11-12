@@ -1,0 +1,25 @@
+# Local stack: two independent containers, as deployed in production.
+#   docker compose up --build   ->  UI on http://localhost:8080
+services:
+  api:
+    build: .
+    image: quay.io/${QUAY_NAMESPACE:-bakhterets}/wheel-tuner-api:${TAG:-latest}
+    volumes:
+      - wheel-data:/data
+    expose:
+      - "8080"
+    restart: unless-stopped
+
+  web:
+    build: ./web
+    image: quay.io/${QUAY_NAMESPACE:-bakhterets}/wheel-tuner-web:${TAG:-latest}
+    environment:
+      BACKEND_URL: http://api:8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  wheel-data:

@@ -1,12 +1,29 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { defaultRows, defaultSide, resizeRows, rowsFromMeasurements, toMeasurements } from '../static/js/measurements.js';
+import {
+  assignSides, defaultRows, defaultSide, firstSide, resizeRows, rowsFromMeasurements, sideIndexes, toMeasurements,
+} from '../static/js/measurements.js';
 
 describe('measurement rows', () => {
   it('alternates sides L/R starting with L', () => {
     assert.deepEqual(defaultRows(4).map((r) => `${r.side}${r.spoke_index}`), ['L1', 'R2', 'L3', 'R4']);
     assert.equal(defaultSide(36), 'R');
+    assert.equal(defaultSide(1, 'R'), 'R');
+    assert.equal(defaultSide(2, 'R'), 'L');
+  });
+
+  it('moves spoke #1 to the other flange keeping the measured values', () => {
+    const rows = defaultRows(4);
+    rows[0].tension_kgf = 101;
+    const swapped = assignSides(rows, 'R');
+    assert.deepEqual(swapped.map((r) => r.side), ['R', 'L', 'R', 'L']);
+    assert.equal(swapped[0].tension_kgf, 101);
+    assert.equal(rows[0].side, 'L', 'input rows are not mutated');
+    assert.equal(firstSide(swapped), 'R');
+    assert.equal(firstSide([]), 'L');
+    assert.deepEqual(sideIndexes(swapped, 'L'), [1, 3]);
+    assert.deepEqual(resizeRows(swapped, 6).map((r) => r.side), ['R', 'L', 'R', 'L', 'R', 'L'], 'new rows continue the alternation');
   });
 
   it('resizes keeping existing data', () => {
@@ -37,11 +54,23 @@ describe('measurement rows', () => {
     const rows = rowsFromMeasurements(ms, 3);
     assert.equal(rows.length, 3);
     assert.deepEqual(rows[1], {
-      spoke_index: 2, side: 'L', tension_kgf: null, lateral_dev_mm: 0.2,
+      spoke_index: 2, side: 'L', tension_kgf: null, tension_reading: null, lateral_dev_mm: 0.2,
       lat_peak_between_next: true, radial_dev_mm: -0.1, rad_peak_between_next: false,
     });
     assert.equal(rows[0].side, 'L');
     const { id: _id, session_id: _sid, ...payload } = ms[0];
     assert.deepEqual(toMeasurements(rows)[1], payload);
+  });
+
+  it('carries tensiometer readings both ways', () => {
+    const ms = [{ spoke_index: 1, side: 'L', tension_kgf: 102, tension_reading: 2.8, lateral_dev_mm: 0, radial_dev_mm: 0 }];
+    const rows = rowsFromMeasurements(ms, 2);
+    assert.equal(rows[0].tension_reading, 2.8);
+    assert.equal(rows[1].tension_reading, null);
+    const out = toMeasurements(rows);
+    assert.equal(out[0].tension_reading, 2.8);
+    assert.equal(out[0].tension_kgf, 102);
+    assert.ok(!('tension_reading' in out[1]), 'no reading is sent for kgf rows');
+    assert.ok(!('tension_reading' in toMeasurements([{ ...rows[1], tension_reading: undefined }])[0]));
   });
 });

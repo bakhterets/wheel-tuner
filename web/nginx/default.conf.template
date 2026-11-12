@@ -1,0 +1,40 @@
+# Rendered by the nginx image entrypoint (envsubst); only ${BACKEND_URL} is
+# substituted because it is the only one defined in the environment.
+server {
+    listen 8080;
+    server_name _;
+    server_tokens off;
+    root /usr/share/nginx/html;
+
+    location / {
+        add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "no-referrer" always;
+        try_files $uri $uri/ /index.html;
+    }
+
+    # The backend sets its own security headers on API responses.
+    location /api/ {
+        proxy_pass ${BACKEND_URL};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 30s;
+        client_max_body_size 1m;
+    }
+
+    # Readiness of the whole chain (frontend -> backend -> database).
+    location = /healthz {
+        proxy_pass ${BACKEND_URL};
+        access_log off;
+    }
+
+    # Liveness of nginx itself.
+    location = /livez {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+}

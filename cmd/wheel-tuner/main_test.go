@@ -51,27 +51,45 @@ func get(t *testing.T, url string) (int, string) {
 	return res.StatusCode, string(body)
 }
 
-func TestRunServesAndShutsDown(t *testing.T) {
+// start runs the server with args on a free port; stop cancels it and
+// returns the server logs once run has returned.
+func start(t *testing.T, args ...string) (base string, stop func() string) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
 	logs := &syncBuffer{}
 	addrc := make(chan string, 1)
 	errc := make(chan error, 1)
 	db := filepath.Join(t.TempDir(), "wheels.db")
-	go func() {
-		errc <- run(ctx, []string{"-addr", "127.0.0.1:0", "-db", db, "-log-level", "debug"}, logs, func(a string) { addrc <- a })
-	}()
+	args = append([]string{"-addr", "127.0.0.1:0", "-db", db, "-log-level", "debug"}, args...)
+	go func() { errc <- run(ctx, args, logs, func(a string) { addrc <- a }) }()
 
-	var base string
 	select {
 	case a := <-addrc:
 		base = "http://" + a
 	case err := <-errc:
+		cancel()
 		t.Fatalf("run exited early: %v", err)
 	case <-time.After(10 * time.Second):
+		cancel()
 		t.Fatal("server did not start")
 	}
+	return base, func() string {
+		t.Helper()
+		cancel()
+		select {
+		case err := <-errc:
+			if err != nil {
+				t.Fatalf("run: %v", err)
+			}
+		case <-time.After(15 * time.Second):
+			t.Fatal("server did not shut down")
+		}
+		return logs.String()
+	}
+}
 
+func TestRunServesAndShutsDown(t *testing.T) {
+	base, stop := start(t)
 	if code, body := get(t, base+"/healthz"); code != http.StatusOK || !strings.Contains(body, "ok") {
 		t.Errorf("healthz = %d %q", code, body)
 	}
@@ -81,21 +99,24 @@ func TestRunServesAndShutsDown(t *testing.T) {
 	if code, _ := get(t, base+"/js/viz/radar.js"); code != http.StatusOK {
 		t.Errorf("radar.js = %d", code)
 	}
-
-	cancel()
-	select {
-	case err := <-errc:
-		if err != nil {
-			t.Fatalf("run: %v", err)
-		}
-	case <-time.After(15 * time.Second):
-		t.Fatal("server did not shut down")
-	}
-	if out := logs.String(); !strings.Contains(out, "shutting down") || !strings.Contains(out, "http request") {
+	if out := stop(); !strings.Contains(out, "shutting down") || !strings.Contains(out, "http request") {
 		t.Errorf("logs missing lifecycle/debug entries:\n%s", out)
 	}
 }
 
+func TestRunAPIOnly(t *testing.T) {
+	base, stop := start(t, "-web=false")
+	defer stop()
+	if code, _ := get(t, base+"/healthz"); code != http.StatusOK {
+		t.Errorf("healthz = %d", code)
+	}
+	if code, body := get(t, base+"/api/tensiometers"); code != http.StatusOK || !strings.Contains(body, "ztto-tc-02") {
+		t.Errorf("tensiometers = %d", code)
+	}
+	if code, _ := get(t, base+"/"); code != http.StatusNotFound {
+		t.Errorf("index without the web UI = %d, want 404", code)
+	}
+}
 func TestRunErrors(t *testing.T) {
 	busy, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {

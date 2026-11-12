@@ -1,0 +1,47 @@
+# Local stack for Podman, without a compose provider:
+#   podman kube play --replace deploy/podman/wheel-tuner.yaml   ->  UI on http://localhost:8080
+#   podman kube down deploy/podman/wheel-tuner.yaml
+# scripts/podman.sh builds the images and wraps these commands.
+#
+# Both containers share the pod's network namespace, so they cannot both use
+# port 8080: the API listens on 127.0.0.1:8081 and is reachable only through
+# the web proxy, as in production.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wheel-tuner-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 100Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: wheel-tuner
+  labels:
+    app: wheel-tuner
+spec:
+  restartPolicy: Always
+  containers:
+    - name: api
+      image: localhost/wheel-tuner-api:latest
+      imagePullPolicy: IfNotPresent
+      args: ["-addr", "127.0.0.1:8081", "-db", "/data/wheel-tuner.db", "-web=false"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+    - name: web
+      image: localhost/wheel-tuner-web:latest
+      imagePullPolicy: IfNotPresent
+      env:
+        - name: BACKEND_URL
+          value: http://127.0.0.1:8081
+      ports:
+        - containerPort: 8080
+          hostPort: 8080
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: wheel-tuner-data

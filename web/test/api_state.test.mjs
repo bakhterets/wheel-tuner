@@ -26,7 +26,7 @@ function fakeFetch(responses) {
 
 describe('api client', () => {
   it('maps every endpoint to method, path and body', async () => {
-    const { fetchImpl, calls } = fakeFetch(Array.from({ length: 9 }, () => ({ status: 200, body: {} })));
+    const { fetchImpl, calls } = fakeFetch(Array.from({ length: 13 }, () => ({ status: 200, body: {} })));
     const c = createClient(fetchImpl, '/base');
     await c.listWheels();
     await c.createWheel({ name: 'a' });
@@ -37,11 +37,17 @@ describe('api client', () => {
     await c.getSession(4);
     await c.solveSession(4);
     await c.solve({ name: 'w' }, []);
+    await c.listRims();
+    await c.listHubs();
+    await c.listTensiometers();
+    await c.geometry({ name: 'g' });
     assert.deepEqual(calls.map((x) => `${x.method} ${x.url}`), [
       'GET /base/api/wheels', 'POST /base/api/wheels', 'PUT /base/api/wheels/3', 'DELETE /base/api/wheels/3',
       'GET /base/api/wheels/3/sessions', 'POST /base/api/wheels/3/sessions', 'GET /base/api/sessions/4',
-      'POST /base/api/sessions/4/solve', 'POST /base/api/solve',
+      'POST /base/api/sessions/4/solve', 'POST /base/api/solve', 'GET /base/api/components/rims',
+      'GET /base/api/components/hubs', 'GET /base/api/tensiometers', 'POST /base/api/geometry',
     ]);
+    assert.deepEqual(calls[12].body, { name: 'g' });
     assert.deepEqual(calls[5].body, { measurements: [{ spoke_index: 1 }] });
     assert.deepEqual(calls[8].body, { wheel: { name: 'w' }, measurements: [] });
     assert.equal(calls[1].headers['Content-Type'], 'application/json');

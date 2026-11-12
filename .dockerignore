@@ -1,0 +1,8 @@
+.git
+.github
+*.db
+*.out
+dev_stages
+web/test
+web/node_modules
+**/*_test.go

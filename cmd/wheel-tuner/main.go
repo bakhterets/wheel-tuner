@@ -1,4 +1,5 @@
-// Command wheel-tuner serves the wheel truing solver API and web UI.
+// Command wheel-tuner serves the wheel truing solver API and, unless started
+// with -web=false (API-only microservice), the embedded web UI.
 package main
 
 import (
@@ -39,6 +40,7 @@ func run(ctx context.Context, args []string, stderr io.Writer, ready func(addr s
 	fset.SetOutput(stderr)
 	addr := fset.String("addr", ":8080", "listen address")
 	dbPath := fset.String("db", "wheel-tuner.db", "SQLite database file")
+	serveWeb := fset.Bool("web", true, "serve the embedded web UI at / (false: API only, for a separate frontend container)")
 	var level slog.Level
 	fset.TextVar(&level, "log-level", slog.LevelInfo, "log level: debug, info, warn, error")
 	if err := fset.Parse(args); err != nil {
@@ -61,13 +63,17 @@ func run(ctx context.Context, args []string, stderr io.Writer, ready func(addr s
 		}
 	}()
 
-	static, err := web.Static()
-	if err != nil {
-		return err
+	opts := []api.Option{api.WithLogger(log)}
+	if *serveWeb {
+		static, err := web.Static()
+		if err != nil {
+			return err
+		}
+		opts = append(opts, api.WithStatic(static))
 	}
 
 	srv := &http.Server{
-		Handler:           api.New(st, api.WithLogger(log), api.WithStatic(static)),
+		Handler:           api.New(st, opts...),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -79,7 +85,7 @@ func run(ctx context.Context, args []string, stderr io.Writer, ready func(addr s
 	if err != nil {
 		return err
 	}
-	log.Info("listening", "addr", ln.Addr().String(), "db", *dbPath)
+	log.Info("listening", "addr", ln.Addr().String(), "db", *dbPath, "web", *serveWeb)
 	if ready != nil {
 		ready(ln.Addr().String())
 	}
