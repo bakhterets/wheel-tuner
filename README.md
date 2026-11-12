@@ -95,7 +95,7 @@ make cover      # Go coverage report
 make build      # bin/wheel-tuner
 ```
 
-The JS tests need Node ≥ 20 and no dependencies: `cd web && node --test --experimental-test-coverage test/`. The DOM is replaced by a minimal fake ([web/test/fakedom.mjs](web/test/fakedom.mjs)).
+The JS tests need Node ≥ 22 and no dependencies: `cd web && node --test --experimental-test-coverage 'test/*.test.mjs'`. The DOM is replaced by a minimal fake ([web/test/fakedom.mjs](web/test/fakedom.mjs)).
 
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) is described in [CI/CD and quay.io](#cicd-and-quayio).
 

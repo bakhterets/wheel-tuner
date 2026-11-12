@@ -130,7 +130,7 @@ JS tests: `bulk_persist.test.mjs` (new); `render.test.mjs`, `library.test.mjs`, 
 | Vet       | `go vet ./...`                                              | clean                |
 | Lint      | `golangci-lint run ./...`                                   | 0 issues             |
 | Go tests  | `go test -cover ./...`                                      | pass                 |
-| JS tests  | `cd web && node --test --experimental-test-coverage test/`  | 84/84, 100% lines/branches/functions |
+| JS tests  | `cd web && node --test --experimental-test-coverage 'test/*.test.mjs'`  | 84/84, 100% lines/branches/functions |
 | Workflow YAML | parsed with js-yaml                                     | valid                |
 
 | Package / area                                  | Coverage |
@@ -166,7 +166,7 @@ Stage-01 backlog 1–5, 7, 8 and stage-02 backlog 2–6 remain open. Stage-02 it
 
 ```powershell
 gofmt -l .; go vet ./...; golangci-lint run ./...; go test -cover ./...
-cd web; node --test --experimental-test-coverage test/; cd ..
+cd web; node --test --experimental-test-coverage 'test/*.test.mjs'; cd ..
 go run ./cmd/wheel-tuner -addr 127.0.0.1:8099 -db $env:TEMP\wt.db          # UI + API
 go run ./cmd/wheel-tuner -addr 127.0.0.1:8081 -web=false -db $env:TEMP\wt.db # API only
 docker compose up -d --build   # where Docker is available; UI on http://localhost:8080

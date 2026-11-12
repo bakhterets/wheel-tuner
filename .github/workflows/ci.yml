@@ -40,7 +40,7 @@ jobs:
         with:
           node-version: 22
       - name: unit tests
-        run: node --test --experimental-test-coverage test/
+        run: node --test --experimental-test-coverage 'test/*.test.mjs'
 
   # Builds both microservice images and checks them together through the
   # nginx proxy, exactly as they run in production.

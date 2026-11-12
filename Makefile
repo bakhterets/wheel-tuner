@@ -14,7 +14,7 @@ test-go:
 	go test -race ./...
 
 test-web:
-	cd web && node --test --experimental-test-coverage test/
+	cd web && node --test --experimental-test-coverage 'test/*.test.mjs'
 
 cover:
 	go test -coverprofile=coverage.out ./...
