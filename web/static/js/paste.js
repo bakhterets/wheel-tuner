@@ -96,6 +96,14 @@ export function applyPaste(rows, startRow, startCol, matrix, columns = COLUMNS) 
         return;
       }
       row[col.key] = v;
+      // Both tension fields describe one value: a pasted reading (even an
+      // empty one) invalidates the converted kgf, which the caller re-derives
+      // with applyReadings; a pasted kgf value drops the reading.
+      if (col.key === 'tension_reading') {
+        row.tension_kgf = null;
+      } else if (col.key === 'tension_kgf') {
+        row.tension_reading = null;
+      }
     });
   });
   return { rows: out, errors };

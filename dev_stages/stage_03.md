@@ -28,7 +28,7 @@ Made autonomously (autopilot); revisit freely if the user disagrees.
 1. **Paired straight-pull model.** Hubs such as Newmen Fade SP and DT 240 SP seat spokes in pairs, so each spoke's hub end is rotated a further half flange-hole pitch (`360°/N`) compared with a classic hub. The crossing angle becomes `θ = cross·720°/N + 360°/N` (only when `cross > 0`; radial lacing is unaffected). The flag lives on the hub component (`paired_spokes`) and is **copied** into the profile like the rest of the geometry (stage-02 decision 2). Paired requires `Straightpull`; otherwise 400 `field: paired_spokes`. The UI forces it off for J-bend.
 2. **Rim max tension is now a hard cap**, not only a warning (closes stage-02 backlog 1). The ≥ 95% warning stays.
 3. **Desired limit.** `tension_limit` (0 = none) with `tension_limit_unit` `kgf` (default) or `reading`. A reading is converted **per side** with that side's gauge (`TensionLimitsKgf`), because L and R may use different spokes. Effective cap per side = the lower positive of the desired limit and `max_tension_kgf`. Errors: a reading limit without a tensiometer → `tension_limit_unit`; a reading outside the gauge's calibrated range → `tension_limit` (never extrapolated, same rule as measurements).
-4. **Solver enforcement** (`internal/solver/solver.go`): an active-set penalty. Each measured spoke gets a zero-weight row `T_i + ΔT_i(x) → cap_i`; rows of spokes predicted above their cap are switched on (`limitWeight`) and the system re-solved until no new row activates (≤ n+1 passes). During successive quantization `capTurn` lowers a rounded turn by one step if it would leave that spoke over its cap; `enforceLimits` finally loosens any spoke still over (rounding, skipped micro-turns). Unmeasured spokes (0 kgf) are never capped. A spoke already above its cap is loosened.
+4. **Solver enforcement** (`internal/solver/solver.go`): an active-set penalty. Each measured spoke gets a zero-weight row `T_i + ΔT_i(x) → cap_i`; rows of spokes predicted above their cap are switched on (`limitWeight`), rows of spokes that fell below their cap are switched off again (the two-sided penalty would otherwise pull them **up** to the cap), and the system is re-solved until the active set is stable (bounded to 2n+1 passes). During successive quantization `capTurn` lowers a rounded turn by one step if it would leave that spoke over its cap, or if rounding up would push an already fixed spoke over its cap through cross-talk; `enforceLimits` finally loosens any spoke still over (rounding, skipped micro-turns). Unmeasured spokes (0 kgf) are never capped. A spoke already above its cap is loosened.
 5. **Frontend rows stay one global array** indexed by spoke number; the two tables are filtered views. The per-row side select was replaced by one toggle *Spoke #1 is on Left/Right*; sides alternate from it (`assignSides`). Rows keep their global number, so the solver API is unchanged.
 6. **Bulk list format.** Brackets optional. Separators: `,` or whitespace; if the text contains `;`, only `;` separates (so `3,15; 3,16` works with decimal commas). An empty item skips that spoke. More values than the side has spokes, an invalid number, or a negative tension → error message, nothing changed. Fewer values fill the first spokes only. A kgf value clears the row's `tension_reading`.
 7. **Persistence** in `localStorage` under `wheel-tuner:state` (version 1): wheel form, rows and the last result. Written on every change, but only **after** the initial restore finished (`persisting` flag), so a failed load never overwrites saved state. `loadState` validates and sanitises rows (`restoreRow`) and drops a malformed result. If the saved profile id no longer exists, the form falls back to a new profile with the saved values.
@@ -62,8 +62,8 @@ Made autonomously (autopilot); revisit freely if the user disagrees.
 
 - `Wheel` gained `PairedSpokes`, `TensionLimitLeftKgf`, `TensionLimitRightKgf`; `Validate` rejects paired J-bend and negative limits.
 - `spanDeg()` adds the pair offset; `tensionLimit(side)` returns the side cap, which the API has already combined with the rim max (`model.TensionLimitsKgf` → `minLimit`).
-- `solver.go`: `limitRows`, `limitSystem`, `activateLimits`, `solveLimited`, `capTurn`, `enforceLimits` (§2.4).
-- Tests: paired lengths in `geometry_test.go`; `TestSolveTensionLimit`, `TestCapTurn` in `solver_test.go`; paired validation in `wheel_test.go`. All earlier regression tests unchanged.
+- `solver.go`: `limitRows`, `limitSystem`, `updateLimits`, `solveLimited`, `capTurn`, `enforceLimits` (§2.4).
+- Tests: paired lengths in `geometry_test.go`; `TestSolveTensionLimit`, `TestSolveNearLimitStillImproves`, `TestCapTurn` in `solver_test.go`; paired validation in `wheel_test.go`. All earlier regression tests unchanged.
 
 ### 4.2 `internal/model`
 
@@ -155,6 +155,16 @@ JS tests: `bulk_persist.test.mjs` (new); `render.test.mjs`, `library.test.mjs`, 
 
 Pitfall found during E2E: a browser that cached the old `main.js` threw `renderGrid … null`; the real cause was an unapplied edit. If you see it, hard-reload and re-check the `ui` refs in `main.js`.
 
+### Pre-PR review fixes ([review.md](review.md))
+
+1. `make run-api` target added (documented but missing).
+2. `statusRecorder.Unwrap()` so `http.ResponseController` (flush, deadlines) reaches the real writer (`TestStatusRecorderUnwrap`).
+3. Pasting into the tension column keeps both fields consistent: a pasted reading, even an empty one, clears the converted `tension_kgf` (re-derived by `applyReadings`); a pasted kgf clears `tension_reading`.
+4. Tension rows are centred per side (`centerTension`), so `ΔT` is measured against the post-adjustment side mean and uniform side tightening is free in the tension term. Absolute tensions and caps use the uncentred matrix (`problem.tension`).
+5. `capTurn` also steps down when rounding up would push an already fixed spoke over its cap.
+6. `deviationErrors`: the spoke row under a flagged peak is interpolated towards the peak instead of ignoring it.
+7. Found while verifying 4–5 (pre-existing): an active cap row stayed active after its spoke dropped below the cap and pulled the tension **up**, which made a near-cap wheel worse than no action (cost 1.70 → 4.47 at HEAD). `updateLimits` now also deactivates such rows; the same case now ends at cost 0.47 (`TestSolveNearLimitStillImproves`). `TestTensionWarnings` covers both a binding 112 kgf and the 122 kgf DT rim limit.
+
 ## 6. Gaps and backlog
 
 Stage-01 backlog 1–5, 7, 8 and stage-02 backlog 2–6 remain open. Stage-02 item 1 (max tension in the optimizer) is done.
@@ -165,6 +175,7 @@ Stage-01 backlog 1–5, 7, 8 and stage-02 backlog 2–6 remain open. Stage-02 it
 4. **Persistence is per browser** (`localStorage`). Cross-device continuity would need a server-side "draft" entity.
 5. **Bulk list for the peak flags** (`*_peak_between_next`) and a "copy column as list" export are not implemented.
 6. **Limit UX:** show the converted kgf next to a reading limit in the form (currently only in the results line).
+7. **Quantization near a cap:** with ≈2 kgf headroom and ≈6 kgf per quarter turn, `capTurn` can refuse a key tightening (e.g. L9) before the headroom-creating loosens are fixed. Deferring capped spokes in the rounding order (or a small branch-and-bound over the last steps) could recover more runout.
 
 ## 7. How to verify quickly
 

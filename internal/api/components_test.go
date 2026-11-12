@@ -243,12 +243,14 @@ func TestTensionWarnings(t *testing.T) {
 		expectStatus(t, rec, http.StatusOK)
 		return decodeBody[result](t, rec)
 	}
-	// All spokes sit at ≈110 kgf: with a 112 kgf rim limit (95 % = 106.4)
-	// every measured spoke warns; without a limit none does.
+	// All spokes sit at ≈110 kgf and the wobble asks to tighten L9 by ≈10
+	// kgf. A 112 kgf limit (95 % = 106.4) binds, so untouched spokes warn; with
+	// the 122 kgf DT rim limit (95 % = 115.9) the tightened spoke warns while
+	// staying under the cap; without a limit nothing warns.
 	for _, tc := range []struct {
 		maxKgf float64
 		warn   bool
-	}{{112, true}, {0, false}, {1000, false}} {
+	}{{112, true}, {122, true}, {0, false}, {1000, false}} {
 		res := solve(tc.maxKgf, measurements(32))
 		if res.MaxTensionKgf != tc.maxKgf || len(res.Actions) == 0 {
 			t.Fatalf("max %v: %+v", tc.maxKgf, res)
@@ -261,10 +263,8 @@ func TestTensionWarnings(t *testing.T) {
 				t.Errorf("max %v: action %+v", tc.maxKgf, a)
 			}
 		}
-		if warned != tc.warn {
-			t.Errorf("max %v: any action warning = %v, want %v", tc.maxKgf, warned, tc.warn)
-		}
 		for _, p := range res.Predicted {
+			warned = warned || p.TensionWarning
 			if p.TensionWarning != (tc.maxKgf > 0 && p.TensionKgf >= 0.95*tc.maxKgf) {
 				t.Errorf("max %v: predicted %+v", tc.maxKgf, p)
 			}
@@ -272,6 +272,9 @@ func TestTensionWarnings(t *testing.T) {
 			if tc.maxKgf > 0 && p.TensionKgf > tc.maxKgf+1e-6 {
 				t.Errorf("max %v: predicted %+v over the rim limit", tc.maxKgf, p)
 			}
+		}
+		if warned != tc.warn {
+			t.Errorf("max %v: any warning = %v, want %v", tc.maxKgf, warned, tc.warn)
 		}
 	}
 	// Unmeasured tensions are predicted as 0 and never warn.

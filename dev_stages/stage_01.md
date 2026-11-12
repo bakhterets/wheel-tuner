@@ -124,7 +124,7 @@ Other behavior:
 ### 5.3 Inter-spoke peaks (value_at_half)
 
 - For each flagged spoke `i`, `deviationMatrix` adds a virtual row `A[i.5] = (A[i] + A[i+1]) / 2` (spec §5), so the row count grows by the number of flags.
-- `deviationErrors`: the virtual row gets the entered value. The spoke-`i` row gets the mean of its neighbours' values.
+- `deviationErrors`: the virtual row gets the entered value. The spoke-`i` row gets the mean of its neighbours' values (superseded: interpolated towards the peak, see stage_03 review fixes).
 - `valueRows`: maps each spoke to the row its entered value refers to (the virtual row wins). `Predicted` reports values at that row.
 
 ### 5.4 Optimization (`solver.go`, `lsq.go`)

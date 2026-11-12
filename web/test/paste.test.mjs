@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { applyPaste, COLUMNS, parseBool, parseNumber, parseSide, parseTable } from '../static/js/paste.js';
+import { applyReadings } from '../static/js/tensiometer.js';
 import { defaultRows } from '../static/js/measurements.js';
 
 describe('parseTable', () => {
@@ -87,5 +88,29 @@ describe('applyPaste', () => {
     assert.equal(rows[0].lateral_dev_mm, null);
     assert.deepEqual(errors.map((e) => e.column), ['side', 'tension_kgf', 'lat_peak_between_next']);
     assert.deepEqual(errors[0], { row: 1, column: 'side', value: '?' });
+  });
+
+  describe('tension fields stay consistent', () => {
+    const readingColumns = COLUMNS.map((c) => (c.key === 'tension_kgf' ? { ...c, key: 'tension_reading' } : c));
+    const tensionCol = COLUMNS.findIndex((c) => c.key === 'tension_kgf');
+    const conv = { convert: (_side, v) => v * 40 };
+    const withReadings = () => defaultRows(2).map((r) => ({ ...r, tension_reading: 3, tension_kgf: 120 }));
+
+    it('an empty reading clears the converted kgf in tensiometer mode', () => {
+      const { rows, errors } = applyPaste(withReadings(), 0, tensionCol, [[''], ['2.5']], readingColumns);
+      assert.deepEqual(errors, []);
+      const out = applyReadings(rows, conv);
+      assert.equal(out[0].tension_reading, null);
+      assert.equal(out[0].tension_kgf, null);
+      assert.equal(out[1].tension_reading, 2.5);
+      assert.equal(out[1].tension_kgf, 100);
+    });
+
+    it('a pasted kgf value drops the reading', () => {
+      const { rows } = applyPaste(withReadings(), 0, tensionCol, [['110']]);
+      assert.equal(rows[0].tension_kgf, 110);
+      assert.equal(rows[0].tension_reading, null);
+      assert.equal(rows[1].tension_reading, 3, 'rows outside the paste keep their reading');
+    });
   });
 });

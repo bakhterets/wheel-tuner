@@ -8,6 +8,9 @@ build:
 run:
 	go run ./cmd/wheel-tuner -addr :8080 -db wheel-tuner.db
 
+run-api:
+	go run ./cmd/wheel-tuner -addr :8081 -db wheel-tuner.db -web=false
+
 test: test-go test-web
 
 test-go:
