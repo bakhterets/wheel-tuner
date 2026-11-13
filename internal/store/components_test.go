@@ -12,14 +12,14 @@ import (
 	"github.com/bakhterets/wheel-tuner/internal/model"
 )
 
-func findRim(t *testing.T, rims []model.RimComponent, name, size string) model.RimComponent {
+func findRim(t *testing.T, rims []model.RimComponent, brand, name, size string) model.RimComponent {
 	t.Helper()
 	for _, r := range rims {
-		if r.Brand == "DT Swiss" && r.Model == name && r.WheelSize == size {
+		if r.Brand == brand && r.Model == name && r.WheelSize == size {
 			return r
 		}
 	}
-	t.Fatalf("rim %s %s not seeded", name, size)
+	t.Fatalf("rim %s %s %s not seeded", brand, name, size)
 	return model.RimComponent{}
 }
 
@@ -50,15 +50,32 @@ func TestComponentLibrarySeeded(t *testing.T) {
 			t.Fatalf("rims not ordered: %s %s before %s %s", a.Model, a.WheelSize, b.Model, b.WheelSize)
 		}
 	}
-	f572 := findRim(t, rims, "F 572", "29")
+	f572 := findRim(t, rims, "DT Swiss", "F 572", "29")
 	want := model.RimComponent{ID: f572.ID, Brand: "DT Swiss", Model: "F 572", WheelSize: "29",
 		HoleCounts: []int{28, 32}, ERDMM: 602, MaxTensionKgf: 122,
 		Source: "https://www.dtswiss.com/en/components/rims-mtb/free-ride/f-572"}
 	if !reflect.DeepEqual(f572, want) {
 		t.Fatalf("F 572 29 = %+v, want %+v", f572, want)
 	}
-	if r := findRim(t, rims, "F 572", "27.5"); r.ERDMM != 564 {
+	if r := findRim(t, rims, "DT Swiss", "F 572", "27.5"); r.ERDMM != 564 {
 		t.Fatalf("F 572 27.5 ERD = %v, want 564", r.ERDMM)
+	}
+	for _, tc := range []struct {
+		model, size string
+		erd         float64
+	}{
+		{"Horizon V2 Front", "27.5", 554.5},
+		{"Horizon V2 Rear", "27.5", 554.3},
+		{"Horizon V2 Front", "29", 592.5},
+		{"Horizon V2 Rear", "29", 592.3},
+	} {
+		r := findRim(t, rims, "Nukeproof", tc.model, tc.size)
+		want := model.RimComponent{ID: r.ID, Brand: "Nukeproof", Model: tc.model, WheelSize: tc.size,
+			HoleCounts: []int{32}, ERDMM: tc.erd,
+			Source: "https://www.lovecyclingbike.com/nukeproof-horizon-v2-rim/"}
+		if !reflect.DeepEqual(r, want) {
+			t.Errorf("%s %s = %+v, want %+v", tc.model, tc.size, r, want)
+		}
 	}
 	got, err := s.GetRim(ctx, f572.ID)
 	if err != nil || !reflect.DeepEqual(got, f572) {
@@ -91,6 +108,24 @@ func TestComponentLibrarySeeded(t *testing.T) {
 	if h := findHub(t, hubs, "DT Swiss", "240 Rear 12x148 Boost 6-bolt"); len(h.HoleCounts) != 0 || h.Position != "rear" {
 		t.Fatalf("DT 240 rear = %+v", h)
 	}
+	horizonHub := findHub(t, hubs, "Nukeproof", "Horizon V2 Rear 12x148 Boost")
+	wantHorizonHub := model.HubComponent{ID: horizonHub.ID, Brand: "Nukeproof", Model: "Horizon V2 Rear 12x148 Boost",
+		Position: "rear", Axle: "12x148 Boost", FlangeDistLeftMM: 37, FlangeDistRightMM: 25,
+		FlangeDiamLeftMM: 58, FlangeDiamRightMM: 64, SpokeType: model.SpokeJBend,
+		HoleCounts: []int{32},
+		Source:     "Nukeproof Horizon V2 rear hub reported identical to Spank HEX; dimensions: https://www.modernbike.com/spank-hex-j-type-6b-disc-rear-hub-32h-12x148mm-xd"}
+	if !reflect.DeepEqual(horizonHub, wantHorizonHub) {
+		t.Fatalf("Nukeproof Horizon V2 rear = %+v, want %+v", horizonHub, wantHorizonHub)
+	}
+	nukeproofHubCount := 0
+	for _, h := range hubs {
+		if h.Brand == "Nukeproof" {
+			nukeproofHubCount++
+		}
+	}
+	if nukeproofHubCount != 1 {
+		t.Fatalf("got %d Nukeproof hubs, want only the rear hub", nukeproofHubCount)
+	}
 	gotHub, err := s.GetHub(ctx, fade.ID)
 	if err != nil || !reflect.DeepEqual(gotHub, fade) {
 		t.Fatalf("GetHub = %+v, %v", gotHub, err)
@@ -116,7 +151,7 @@ func TestSeedUpsertKeepsIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f572 := findRim(t, rims, "F 572", "29")
+	f572 := findRim(t, rims, "DT Swiss", "F 572", "29")
 	if _, err := s.db.ExecContext(ctx, `UPDATE rim_components SET erd_mm = 1 WHERE id = ?`, f572.ID); err != nil {
 		t.Fatal(err)
 	}
