@@ -1,6 +1,7 @@
 // SVG wheel model: rim, spokes coloured by solver action, and wobble
 // (lateral) / hop (radial) problem zones.
 import { s } from '../dom.js';
+import { sideNumbers } from '../measurements.js';
 import { adjustmentMap, angleAt, arcPath, deviationSamples, polar, problemZones, viewSideOf } from './geometry.js';
 
 const SIZE = 460;
@@ -36,11 +37,12 @@ export function renderWheel(container, { wheel, rows, result }) {
   const dir = wheel.counting_direction;
   const viewSide = viewSideOf(wheel.view_point);
   const actions = adjustmentMap(result?.actions);
+  const numbers = sideNumbers(rows);
 
   const wobble = problemZones(deviationSamples(rows, 'lateral_dev_mm', 'lat_peak_between_next'), n, dir);
   const hop = problemZones(deviationSamples(rows, 'radial_dev_mm', 'rad_peak_between_next'), n, dir);
 
-  const spokes = rows.map((r) => {
+  const spokes = rows.map((r, i) => {
     const a = angleAt(r.spoke_index, n, dir);
     const p0 = polar(C, C, R.hub, a);
     const p1 = polar(C, C, R.radialIn, a);
@@ -49,16 +51,16 @@ export function renderWheel(container, { wheel, rows, result }) {
     return s('line', {
       x1: p0.x.toFixed(2), y1: p0.y.toFixed(2), x2: p1.x.toFixed(2), y2: p1.y.toFixed(2),
       class: ['spoke', kind, r.side === viewSide ? 'near' : 'far'],
-    }, s('title', { text: act ? act.instruction : `Spoke ${r.side}${r.spoke_index}` }));
+    }, s('title', { text: act ? act.instruction : `Spoke ${r.side}${numbers[i]}` }));
   });
 
-  const labels = rows.map((r) => {
+  const labels = rows.map((r, i) => {
     const p = polar(C, C, R.label, angleAt(r.spoke_index, n, dir));
     const act = actions.get(r.spoke_index);
     return s('text', {
       x: p.x.toFixed(2), y: p.y.toFixed(2), class: ['spoke-label', act?.direction],
       'text-anchor': 'middle', 'dominant-baseline': 'central',
-    }, `${r.side}${r.spoke_index}`);
+    }, `${r.side}${numbers[i]}`);
   });
 
   const ref = polar(C, C, R.radialIn - 14, 0);

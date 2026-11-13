@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math"
@@ -110,12 +111,13 @@ type solveResult struct {
 	SessionID   int64  `json:"session_id"`
 	Orientation string `json:"orientation"`
 	Actions     []struct {
-		Spoke       int     `json:"spoke_index"`
-		Side        string  `json:"side"`
-		Turns       float64 `json:"turns"`
-		Fraction    string  `json:"fraction"`
-		Direction   string  `json:"direction"`
-		Instruction string  `json:"instruction"`
+		Spoke           int     `json:"spoke_index"`
+		Side            string  `json:"side"`
+		SideSpokeNumber int     `json:"side_spoke_number"`
+		Turns           float64 `json:"turns"`
+		Fraction        string  `json:"fraction"`
+		Direction       string  `json:"direction"`
+		Instruction     string  `json:"instruction"`
 	} `json:"actions"`
 	Turns  []float64 `json:"turns"`
 	Before struct {
@@ -140,7 +142,8 @@ func checkSolve(t *testing.T, res solveResult, n int) {
 		if a.Turns > 0 {
 			want = "tighten"
 		}
-		if a.Direction != want || a.Fraction == "" || !strings.HasPrefix(a.Instruction, "Spoke "+a.Side) {
+		if a.SideSpokeNumber != (a.Spoke+1)/2 || a.Direction != want || a.Fraction == "" ||
+			!strings.HasPrefix(a.Instruction, fmt.Sprintf("Spoke %s%d:", a.Side, a.SideSpokeNumber)) {
 			t.Errorf("inconsistent action %+v", a)
 		}
 	}

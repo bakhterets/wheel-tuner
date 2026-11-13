@@ -10,30 +10,36 @@ import (
 
 // Sources of the seeded component data.
 const (
-	srcDTSwissCalc = "DT Swiss spoke calculator, https://spokes-calculator.dtswiss.com/en/data/calculator"
-	srcNewmenHubs  = "Newmen Hub_Flange_Dimensions.pdf, https://www.newmen-components.de/upload/_temp/gallery_87d8bc7d-01fb-4701-ab7a-c1051d746d2b/Hub_Flange_Dimensions.pdf"
+	srcDTSwissCalc      = "DT Swiss spoke calculator, https://spokes-calculator.dtswiss.com/en/data/calculator"
+	srcNewmenHubs       = "Newmen Hub_Flange_Dimensions.pdf, https://www.newmen-components.de/upload/_temp/gallery_87d8bc7d-01fb-4701-ab7a-c1051d746d2b/Hub_Flange_Dimensions.pdf"
+	srcNukeproofRim     = "https://www.lovecyclingbike.com/nukeproof-horizon-v2-rim/"
+	srcNukeproofRearHub = "Nukeproof Horizon V2 rear hub reported identical to Spank HEX; dimensions: https://www.modernbike.com/spank-hex-j-type-6b-disc-rear-hub-32h-12x148mm-xd"
 )
 
 // dtRimMaxTensionKgf is DT Swiss' 1200 N MTB rim limit as published by
 // retailers (r2-bike.com) for the EX 511, XM 481, XR 391 and F 572.
 const dtRimMaxTensionKgf = 122
 
-// rimSeeds returns the rim library. ERDs are DT Swiss' published values;
-// 28h and 32h drillings share one ERD. All are symmetric rims.
+// rimSeeds returns the rim library. ERDs are published values; all rims are
+// symmetric, and hole counts list the available drillings.
 func rimSeeds() []model.RimComponent {
 	type rim struct {
+		brand         string
 		model         string
 		erd275, erd29 float64
 		maxKgf        float64
+		holeCounts    []int
 		page          string
 	}
 	rims := []rim{
-		{"F 572", 564, 602, dtRimMaxTensionKgf, "https://www.dtswiss.com/en/components/rims-mtb/free-ride/f-572"},
-		{"EX 511", 563, 601, dtRimMaxTensionKgf, "https://www.dtswiss.com/en/components/rims-mtb/enduro/ex-511"},
-		{"XM 481", 563, 601, dtRimMaxTensionKgf, "https://www.dtswiss.com/en/components/rims-mtb/all-mountain/xm-481"},
-		{"FR 541", 565, 603, 0, "https://www.dtswiss.com/en/components/rims-mtb/free-ride/fr-541"},
-		{"XM 421", 564, 602, 0, "https://www.dtswiss.com/en/components/rims-mtb/all-mountain/xm-421"},
-		{"XR 391", 569, 607, dtRimMaxTensionKgf, srcDTSwissCalc},
+		{"DT Swiss", "F 572", 564, 602, dtRimMaxTensionKgf, []int{28, 32}, "https://www.dtswiss.com/en/components/rims-mtb/free-ride/f-572"},
+		{"DT Swiss", "EX 511", 563, 601, dtRimMaxTensionKgf, []int{28, 32}, "https://www.dtswiss.com/en/components/rims-mtb/enduro/ex-511"},
+		{"DT Swiss", "XM 481", 563, 601, dtRimMaxTensionKgf, []int{28, 32}, "https://www.dtswiss.com/en/components/rims-mtb/all-mountain/xm-481"},
+		{"DT Swiss", "FR 541", 565, 603, 0, []int{28, 32}, "https://www.dtswiss.com/en/components/rims-mtb/free-ride/fr-541"},
+		{"DT Swiss", "XM 421", 564, 602, 0, []int{28, 32}, "https://www.dtswiss.com/en/components/rims-mtb/all-mountain/xm-421"},
+		{"DT Swiss", "XR 391", 569, 607, dtRimMaxTensionKgf, []int{28, 32}, srcDTSwissCalc},
+		{"Nukeproof", "Horizon V2 Front", 554.5, 592.5, 0, []int{32}, srcNukeproofRim},
+		{"Nukeproof", "Horizon V2 Rear", 554.3, 592.3, 0, []int{32}, srcNukeproofRim},
 	}
 	out := make([]model.RimComponent, 0, 2*len(rims))
 	for _, r := range rims {
@@ -42,7 +48,7 @@ func rimSeeds() []model.RimComponent {
 			erd  float64
 		}{{"27.5", r.erd275}, {"29", r.erd29}} {
 			out = append(out, model.RimComponent{
-				Brand: "DT Swiss", Model: r.model, WheelSize: size.name, HoleCounts: []int{28, 32},
+				Brand: r.brand, Model: r.model, WheelSize: size.name, HoleCounts: r.holeCounts,
 				ERDMM: size.erd, MaxTensionKgf: r.maxKgf, Source: r.page,
 			})
 		}
@@ -126,6 +132,8 @@ func hubSeeds() []model.HubComponent {
 		dt("240 Rear 12x142 CL", "rear", "12x142", jb, 50.4, 50.4, 34.3, 19.6),
 		dt("240 SP Rear 12x142 6-bolt/CL", "rear", "12x142", sp, 35.9, 42.8, 32.8, 18.5),
 		dt("180 Rear 12x142 CL", "rear", "12x142", jb, 44, 47.5, 33.2, 19.5),
+
+		hub("Nukeproof", "Horizon V2 Rear 12x148 Boost", "rear", "12x148 Boost", jb, []int{32}, 58, 64, 37, 25, srcNukeproofRearHub),
 	}
 }
 

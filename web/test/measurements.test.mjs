@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
-  assignSides, defaultRows, defaultSide, firstSide, resizeRows, rowsFromMeasurements, sideIndexes, toMeasurements,
+  assignSides, defaultRows, defaultSide, firstSide, resizeRows, rowsFromMeasurements, sideIndexes, sideNumbers, toMeasurements,
 } from '../static/js/measurements.js';
 
 describe('measurement rows', () => {
@@ -24,6 +24,12 @@ describe('measurement rows', () => {
     assert.equal(firstSide([]), 'L');
     assert.deepEqual(sideIndexes(swapped, 'L'), [1, 3]);
     assert.deepEqual(resizeRows(swapped, 6).map((r) => r.side), ['R', 'L', 'R', 'L', 'R', 'L'], 'new rows continue the alternation');
+  });
+
+  it('numbers spokes independently on each side', () => {
+    assert.deepEqual(sideNumbers(defaultRows(6)), [1, 1, 2, 2, 3, 3]);
+    assert.deepEqual(sideNumbers(assignSides(defaultRows(6), 'R')), [1, 1, 2, 2, 3, 3]);
+    assert.deepEqual(sideNumbers(defaultRows(28)).slice(24), [13, 13, 14, 14]);
   });
 
   it('resizes keeping existing data', () => {

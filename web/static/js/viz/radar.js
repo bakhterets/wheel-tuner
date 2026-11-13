@@ -2,6 +2,7 @@
 // spokes are plotted relative to that side's average tension, with a ±20%
 // tolerance band. Drive side = right flange, non-drive side = left flange.
 import { s } from '../dom.js';
+import { sideNumbers } from '../measurements.js';
 import { angleAt, polar, radarRadius, relativeTensions } from './geometry.js';
 
 const SIZE = 460;
@@ -18,7 +19,7 @@ export const SERIES = Object.freeze([
 
 const rad = (rel) => radarRadius(rel, R_MIN, R_MAX, RANGE);
 
-function series(rel, n, dir, cls, predicted) {
+function series(rel, n, dir, cls, predicted, numberByIndex) {
   return SERIES.map(({ side, cls: sideCls }) => {
     const pts = rel.filter((p) => p.side === side && p.rel !== null)
       .map((p) => ({ ...p, ...polar(C, C, rad(p.rel), angleAt(p.index, n, dir)) }));
@@ -34,7 +35,7 @@ function series(rel, n, dir, cls, predicted) {
       const pct = (p.rel - 1) * 100;
       return s('circle', {
         cx: p.x.toFixed(2), cy: p.y.toFixed(2), r: out ? 5 : 3, class: ['dot', sideCls, out && 'outlier'],
-      }, s('title', { text: `${side}${p.index}: ${pct >= 0 ? '+' : ''}${pct.toFixed(1)}% vs ${side} average` }));
+      }, s('title', { text: `${side}${numberByIndex.get(p.index)}: ${pct >= 0 ? '+' : ''}${pct.toFixed(1)}% vs ${side} average` }));
     });
     return s('g', {}, [outline, dots]);
   });
@@ -47,6 +48,8 @@ function series(rel, n, dir, cls, predicted) {
 export function renderRadar(container, { rows, wheel, result }) {
   const n = rows.length;
   const dir = wheel.counting_direction;
+  const numbers = sideNumbers(rows);
+  const numberByIndex = new Map(rows.map((row, i) => [row.spoke_index, numbers[i]]));
   const measured = relativeTensions(rows);
   const hasData = measured.some((p) => p.rel !== null);
 
@@ -57,13 +60,13 @@ export function renderRadar(container, { rows, wheel, result }) {
     predicted = relativeTensions(after);
   }
 
-  const axes = rows.map((r) => {
+  const axes = rows.map((r, i) => {
     const a = angleAt(r.spoke_index, n, dir);
     const p = polar(C, C, R_MAX, a);
     const l = polar(C, C, R_MAX + 14, a);
     return [
       s('line', { x1: C, y1: C, x2: p.x.toFixed(2), y2: p.y.toFixed(2), class: 'axis' }),
-      s('text', { x: l.x.toFixed(2), y: l.y.toFixed(2), class: 'axis-label', 'text-anchor': 'middle', 'dominant-baseline': 'central' }, String(r.spoke_index)),
+      s('text', { x: l.x.toFixed(2), y: l.y.toFixed(2), class: 'axis-label', 'text-anchor': 'middle', 'dominant-baseline': 'central' }, `${r.side}${numbers[i]}`),
     ];
   });
 
@@ -78,8 +81,8 @@ export function renderRadar(container, { rows, wheel, result }) {
     s('text', { x: C + 4, y: C - rad(1) - 3, class: 'ring-label' }, 'avg'),
     s('text', { x: C + 4, y: C - rad(1 + BAND) - 3, class: 'ring-label' }, `+${BAND * 100}%`),
     s('text', { x: C + 4, y: C - rad(1 - BAND) - 3, class: 'ring-label' }, `−${BAND * 100}%`),
-    series(predicted, n, dir, 'predicted', true),
-    series(measured, n, dir, 'measured', false),
+    series(predicted, n, dir, 'predicted', true, numberByIndex),
+    series(measured, n, dir, 'measured', false, numberByIndex),
     hasData ? null : s('text', { x: C, y: C, class: 'empty', 'text-anchor': 'middle' }, 'Enter tensions to see the chart'),
   ]);
   container.replaceChildren(svg);
